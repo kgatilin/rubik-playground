@@ -88,6 +88,10 @@ turn accounting and the same log:
 - Looking is free: `state` can be called any number of times.
 - Any number of actions per `move` call; they are applied in order and each one costs
   its face turns.
+- Quote the action list: `jev-playground move "R U R'" --game <n>`. Unquoted, the shell
+  pairs the prime marks as quotes and drops them (`move R' U R'` arrives as `R U R`, three
+  clockwise turns), with no error when the number of primes is even. The server cannot
+  tell this from an intended `R U R`, so the turns are applied and count.
 
 ## Observation
 
