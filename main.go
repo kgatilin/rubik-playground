@@ -164,7 +164,7 @@ func runCmd() *cobra.Command {
 	f.BoolVar(&req.NoUndo, "no-undo", true, "do not offer the inverse of the previous move")
 	f.BoolVar(&req.Shuffle, "shuffle", false, "randomise the order of offered moves")
 	f.BoolVar(&req.HideHistory, "hide-history", false, "leave the move history out of the state text")
-	f.BoolVar(&req.Lookahead, "lookahead", false, "describe each move by the sticker count it leads to")
+	f.BoolVar(&req.Lookahead, "lookahead", true, "describe each move by the sticker count it leads to")
 	return cmd
 }
 
