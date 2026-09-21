@@ -20,6 +20,26 @@ implemented yet. Everything else matches the code.
   server session (`/api/state` JSON, `runs/*.jsonl` of the current game) or the
   event stream has forfeited the game.
 
+## Games and the leaderboard
+
+A game is one registered attempt (`game.go`). Registration (`play --as <model>`, the page's
+Play button, `run --ui --game`) drops the open game, gives the cube a fresh random 20-move
+scramble and opens a game under that name. One game per `serve` at a time. It closes by
+itself: `solved`, `dnf` at the turn limit, or `abandoned` when a new registration, scramble
+or reset arrives. A closed game is one line of `runs/games.jsonl`: player, category,
+scramble, every move in order, decisions (built-in players), times, outcome.
+
+The leaderboard (`leaderboard` command, `/api/leaderboard`, the page panel) is computed
+from that file on every read: per player and category, games, solved, DNF, abandoned, best
+and mean face turns of solved games. Category is the observation mode, plus `+lookahead`
+for Jev. A built-in player's `observation` and `lookahead` are fixed at registration, and
+a step by another built-in player is refused while a game is open.
+
+Not covered: the name is whatever the player declares; a forfeit (reading the scramble) is
+not detected; every move made while a game is open counts towards it, including moves from
+the page; scrambles are random per attempt, so compare players by the mean over many games;
+a game open when `serve` stops is not recorded.
+
 ## Players
 
 A player is anything that turns an observation into an action. There are two ways
@@ -41,7 +61,7 @@ turn accounting and the same log:
 
 ### Rules for external (CLI) players
 
-- Allowed commands: `jev-playground state [--image <file>]`, `jev-playground move <actions> --as <name> [--image <file>]`,
+- Allowed commands: `jev-playground play --as <name> [--image <file>]`, `jev-playground state [--image <file>]`, `jev-playground move <actions> --as <name> [--image <file>]`,
   `jev-playground actions` **(proposed)**. Nothing else touches the cube.
 - No scripts, loops, solvers or simulation of the cube in code. The cube is simulated
   only in the player's head. `state` takes no cube arguments for this reason; `--image` only
@@ -147,6 +167,7 @@ Stated so results are read correctly; none of it is compensated unless listed.
 - `jev.go` — `Decider` interface, shared `prepareStep`/`finishStep`, `Jev.Decide`, one
   JSON line per decision in `runs/<run>.jsonl`.
 - `gemini.go` — `Gemini.Decide`: the tool-calling conversation.
+- `game.go` — `Game`, `Session.Play`, game closing, `leaderboard` over `runs/games.jsonl`.
 - `server.go` — `Session` (the served cube), SSE event stream `/api/events`, commands
   `/api/reset`, `/api/scramble`, `/api/move`, `/api/step`. The page only renders events.
 - `main.go` — cobra commands: `serve`, `run [--ui]`, `show`, `state`, `move`.
@@ -163,6 +184,6 @@ Secrets and config come from env or `.env` (gitignored, loaded by `loadEnv`):
 Vertex AI uses application default credentials (`gcloud auth application-default login`);
 no key files and no project ids in the repo.
 
-Not recorded today: moves made through `move` or the page are in the event stream and
-the page log, not in `runs/*.jsonl` (only Jev decisions are). A game log that covers
-every player is part of the proposed work.
+Moves made through `move` or the page are recorded only inside a registered game
+(`runs/games.jsonl`); outside one they are in the event stream and the page log only.
+`runs/<run>.jsonl` holds built-in decisions.

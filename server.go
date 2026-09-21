@@ -25,18 +25,20 @@ type Session struct {
 	run      string
 	scramble []string
 	history  []string
+	game     *Game   // the registered game being played, nil outside one
 	log      []event // scramble, move and decision events of the current game, replayed to a page that connects
 	subs     map[chan []byte]struct{}
 }
 
 type event struct {
-	Type     string      `json:"type"` // sync | move | scramble | decision
+	Type     string      `json:"type"` // sync | move | scramble | decision | game
 	Move     string      `json:"move,omitempty"`
 	By       string      `json:"by,omitempty"` // who made the move: jev, page, cli, or an agent name
 	Moves    []string    `json:"moves,omitempty"`
 	Scramble []string    `json:"scramble"`
 	History  []string    `json:"history"`
 	Record   *StepRecord `json:"record,omitempty"`
+	Game     *Game       `json:"game,omitempty"` // game: opened (no outcome) or closed
 	Log      []event     `json:"log,omitempty"` // sync only: the game so far, for the page log
 }
 
@@ -84,6 +86,7 @@ func (s *Session) publish(e event) {
 func (s *Session) Reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.closeGame("abandoned")
 	s.scramble, s.history, s.run, s.gemini = nil, nil, newRunID("ui"), map[string]*Gemini{}
 	s.publish(event{Type: "sync"})
 }
@@ -97,6 +100,7 @@ func (s *Session) Scramble(moves []string) error {
 			return fmt.Errorf("unknown move %q", m)
 		}
 	}
+	s.closeGame("abandoned")
 	s.scramble = append(append(s.scramble, s.history...), moves...)
 	s.history, s.run, s.gemini, s.log = nil, newRunID("ui"), map[string]*Gemini{}, nil
 	s.publish(event{Type: "scramble", Moves: moves})
@@ -112,8 +116,7 @@ func (s *Session) Move(m, by string) error {
 	if len(s.history) >= defaultLimit {
 		return errLimit
 	}
-	s.history = append(s.history, m)
-	s.publish(event{Type: "move", Move: m, By: by})
+	s.record(m, by)
 	return nil
 }
 
@@ -151,6 +154,12 @@ func (s *Session) Step(req StepRequest) (*StepRecord, error) {
 	cube := NewCube()
 	cube.ApplyAll(s.scramble)
 	cube.ApplyAll(s.history)
+	if g := s.game; g != nil && g.Player != req.Player {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("the game in progress belongs to %s", g.Player)
+	} else if g != nil { // the game's category is fixed at registration
+		req.Observation, req.Lookahead = g.Observation, g.Lookahead
+	}
 	d, err := s.decider(req.Player)
 	s.mu.Unlock()
 	switch {
@@ -173,9 +182,11 @@ func (s *Session) Step(req StepRequest) (*StepRecord, error) {
 		return nil, errors.New("the cube changed while the player was deciding; decision dropped")
 	}
 	s.publish(event{Type: "decision", Record: rec})
+	if s.game != nil {
+		s.game.Decisions++
+	}
 	for _, m := range rec.Moves {
-		s.history = append(s.history, m)
-		s.publish(event{Type: "move", Move: m, By: rec.Request.Player})
+		s.record(m, rec.Request.Player)
 	}
 	return rec, nil
 }
@@ -249,6 +260,16 @@ func (s *Session) routes(mux *http.ServeMux) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(event{Type: "sync", Scramble: s.scramble, History: s.history})
 	})
+	mux.HandleFunc("/api/leaderboard", func(w http.ResponseWriter, r *http.Request) {
+		rows, err := leaderboard()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(rows)
+	})
+	mux.HandleFunc("/api/play", post(func(in PlayRequest) (any, error) { return s.Play(in) }))
 	mux.HandleFunc("/api/reset", post(func(struct{}) (any, error) { s.Reset(); return struct{}{}, nil }))
 	mux.HandleFunc("/api/move", post(func(in struct{ Move, By string }) (any, error) { return struct{}{}, s.Move(in.Move, in.By) }))
 	mux.HandleFunc("/api/scramble", post(func(in struct {

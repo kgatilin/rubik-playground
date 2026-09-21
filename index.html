@@ -28,7 +28,12 @@
   label { color:var(--dim); display:flex; gap:6px; align-items:center; }
   .row { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
 
-  #settings { border-bottom:1px solid var(--line); }
+  #settings, #board { border-bottom:1px solid var(--line); }
+  #board > summary { padding:8px 14px; cursor:pointer; color:var(--dim); font-size:11px; letter-spacing:.1em; text-transform:uppercase; list-style-position:inside; }
+  #board .body { padding:0 14px 12px; max-height:34vh; overflow:auto; }
+  #board table { width:100%; border-collapse:collapse; font:11.5px/1.5 var(--mono); }
+  #board th { text-align:right; color:var(--dim); font-weight:normal; } #board td { text-align:right; border-top:1px solid var(--line); }
+  #board th:first-child, #board td:first-child { text-align:left; word-break:break-all; }
   #settings > summary { padding:8px 14px; cursor:pointer; color:var(--dim); font-size:11px; letter-spacing:.1em; text-transform:uppercase; list-style-position:inside; }
   #settings .body { padding:4px 14px 14px; display:flex; flex-direction:column; gap:10px; max-height:46vh; overflow:auto; }
   #settings textarea, #settings input[type=text] { width:100%; } #settings textarea { height:76px; resize:vertical; }
@@ -73,7 +78,8 @@
     <select id="player" title="built-in player"></select>
     <select id="thinking" title="Gemini thinking level"><option value="">thinking: default</option><option>minimal</option><option>low</option><option>medium</option><option>high</option></select>
     <select id="observation" title="how the faces are shown to the player"><option value="text">faces: text</option><option value="image">faces: image</option></select>
-    <button class="go" id="run">Run</button>
+    <button class="go" id="play" title="leaderboard game: fresh 20-move scramble, then run">Play</button>
+    <button id="run" title="keep playing the current cube">Run</button>
     <button id="step">Step</button>
     <button id="stop" disabled>Stop</button>
     <span style="flex:1"></span>
@@ -106,6 +112,11 @@
       </div>
       <div class="row"><label>decisions max</label><input id="maxSteps" type="number" min="1" max="500" value="100" title="the game itself ends at 100 face turns"></div>
     </div>
+  </details>
+
+  <details id="board">
+    <summary>Leaderboard</summary>
+    <div class="body"><table id="boardRows"></table></div>
   </details>
 
   <div class="log-head"><span>Game log</span><span id="runName"></span><span class="sp"></span>
@@ -334,6 +345,7 @@ const builtIn = by => /^(jev$|gemini:)/.test(by || '');
 function logEvent(e) {
   if (e.type === 'decision') decisionCard(e.record);
   else if (e.type === 'scramble') separator(`scramble · ${e.moves.length} moves`);
+  else if (e.type === 'game') { separator(e.game.outcome ? `game over · ${e.game.player} · ${e.game.outcome} · ${e.game.moves.length} face turns` : `game · ${e.game.player} · faces: ${e.game.observation}`); if (e.game.outcome) loadBoard(); }
   else if (e.type === 'move' && !builtIn(e.by)) logMove(e.move, e.by || 'unknown', e.history.length);
 }
 
@@ -383,6 +395,15 @@ addEventListener('keydown', e => {
 $('reset').onclick = () => send('/api/reset');
 $('scramble').onclick = () => send('/api/scramble', { len: +$('scrambleN').value || 20 });
 
+// ---------- leaderboard ----------
+function loadBoard() {
+  fetch('/api/leaderboard').then(r => r.json()).then(rows => {
+    $('boardRows').innerHTML = '<tr><th>player</th><th>faces</th><th>games</th><th>solved</th><th>dnf</th><th>dropped</th><th>best</th><th>mean</th></tr>'
+      + rows.map(r => `<tr><td>${esc(r.player)}</td><td>${esc(r.category)}</td><td>${r.attempts}</td><td>${r.solved}</td><td>${r.dnf}</td><td>${r.abandoned}</td><td>${r.best || '–'}</td><td>${r.mean ? r.mean.toFixed(1) : '–'}</td></tr>`).join('');
+  }).catch(() => {});
+}
+loadBoard();
+
 // ---------- built-in players ----------
 const showThinking = () => { for (const id of ['thinking', 'observation']) $(id).style.display = $('player').value.startsWith('gemini:') ? '' : 'none'; };
 fetch('/api/players').then(r => r.json()).then(list => {
@@ -401,7 +422,7 @@ const stepRequest = () => ({ player: playerId(), options: $('moves').value.trim(
 let running = false;
 async function run(limit) {
   if (running) return;
-  running = true; $('run').disabled = $('step').disabled = true; $('stop').disabled = false;
+  running = true; $('play').disabled = $('run').disabled = $('step').disabled = true; $('stop').disabled = false;
   let done = 0, last = null;
   try {
     for (; done < limit && running; done++) {
@@ -413,9 +434,15 @@ async function run(limit) {
       note(last.solved ? `<b>solved</b> in ${turns} face turns, ${done} decisions` : `stopped after ${done} decisions, ${turns} face turns: ${last.matched_after}/54 stickers in place`);
     }
   } catch (e) { log(e.message, true); }
-  running = false; $('run').disabled = $('step').disabled = false; $('stop').disabled = true;
+  running = false; $('play').disabled = $('run').disabled = $('step').disabled = false; $('stop').disabled = true;
 }
 $('run').onclick = () => run(Math.max(1, Math.min(500, +$('maxSteps').value || 100)));
+$('play').onclick = async () => {
+  if (running) return;
+  const r = stepRequest();
+  try { await post('/api/play', { player: r.player, observation: r.observation, lookahead: r.lookahead }); } catch (e) { return log(e.message, true); }
+  run(Math.max(1, Math.min(500, +$('maxSteps').value || 100)));
+};
 $('step').onclick = () => run(1);
 $('stop').onclick = () => { running = false; };
 

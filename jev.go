@@ -142,7 +142,7 @@ func finishStep(rec *StepRecord, cube *Cube) error {
 		cube.Apply(m)
 	}
 	rec.MatchedAfter, rec.Solved = cube.Matched(), cube.Solved()
-	return appendRunLog(rec)
+	return appendJSONL(rec.Request.Run, rec)
 }
 
 // Decide asks Jev for the next move, appends the record to the run log and returns it.
@@ -226,16 +226,17 @@ func (j *Jev) Decide(req StepRequest) (*StepRecord, error) {
 	return rec, finishStep(rec, cube)
 }
 
-func appendRunLog(rec *StepRecord) error {
+// appendJSONL adds one line to runs/<name>.jsonl.
+func appendJSONL(name string, v any) error {
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(runsDir, filepath.Base(rec.Request.Run)+".jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(filepath.Join(runsDir, filepath.Base(name)+".jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	line, _ := json.Marshal(rec)
+	line, _ := json.Marshal(v)
 	_, err = f.Write(append(line, '\n'))
 	return err
 }

@@ -110,14 +110,18 @@ func runCmd() *cobra.Command {
 		moves       string
 		maxMoves    int
 		ui          string
+		game        bool
 	)
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Scramble a cube and let Jev play up to --max moves",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			req.Options = strings.Fields(moves)
+			if game && ui == "" {
+				return fmt.Errorf("--game needs --ui: leaderboard games are played on a running serve")
+			}
 			if ui != "" {
-				return runOnServer(ui, req, strings.Fields(scramble), maxMoves)
+				return runOnServer(ui, req, strings.Fields(scramble), maxMoves, game)
 			}
 			var player Decider
 			if model, ok := strings.CutPrefix(req.Player, "gemini:"); ok {
@@ -161,6 +165,7 @@ func runCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&ui, "ui", "", "play on the cube of a running `serve` so the page shows it, e.g. localhost:7810; without --scramble the current cube is kept")
 	f.Lookup("ui").NoOptDefVal = "localhost:7810"
+	f.BoolVar(&game, "game", false, "with --ui: register a leaderboard game (fresh 20-move scramble) before playing")
 	f.StringVar(&scramble, "scramble", "", "scramble moves, e.g. \"R U F'\" (default: random)")
 	f.IntVar(&scrambleLen, "scramble-len", 3, "length of the random scramble")
 	f.IntVar(&maxMoves, "max", 100, "decision limit (the game itself ends at 100 face turns)")
@@ -175,22 +180,31 @@ func runCmd() *cobra.Command {
 	return cmd
 }
 
+// call posts a JSON command to a running serve.
+func call(addr, path string, in, out any) error {
+	body, _ := json.Marshal(in)
+	resp, err := http.Post("http://"+addr+path, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		msg, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("%s: %s", path, strings.TrimSpace(string(msg)))
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
 // runOnServer plays on the served cube: the page animates every move.
-func runOnServer(addr string, req StepRequest, scramble []string, maxMoves int) error {
-	call := func(path string, in, out any) error {
-		body, _ := json.Marshal(in)
-		resp, err := http.Post("http://"+addr+path, "application/json", bytes.NewReader(body))
-		if err != nil {
+func runOnServer(addr string, req StepRequest, scramble []string, maxMoves int, game bool) error {
+	call := func(path string, in, out any) error { return call(addr, path, in, out) }
+	if game {
+		in := PlayRequest{Player: req.Player, Observation: req.Observation, Lookahead: req.Lookahead}
+		if err := call("/api/play", in, &Game{}); err != nil {
 			return err
 		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			msg, _ := io.ReadAll(resp.Body)
-			return fmt.Errorf("%s: %s", path, strings.TrimSpace(string(msg)))
-		}
-		return json.NewDecoder(resp.Body).Decode(out)
-	}
-	if len(scramble) > 0 {
+		fmt.Printf("leaderboard game for %s\n", req.Player)
+	} else if len(scramble) > 0 {
 		var applied []string
 		if err := call("/api/reset", struct{}{}, &struct{}{}); err != nil {
 			return err
@@ -278,12 +292,43 @@ func playCmds() []*cobra.Command {
 			return observe()
 		},
 	}
-	for _, c := range []*cobra.Command{state, move} {
+	var player string
+	play := &cobra.Command{
+		Use:   "play --as <model>",
+		Short: "Register for a leaderboard game: fresh 20-move scramble, the result is recorded under the name",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			in := PlayRequest{Player: player, Observation: obsText}
+			if imagePath != "" {
+				in.Observation = obsImage
+			}
+			if err := call(addr, "/api/play", in, &Game{}); err != nil {
+				return err
+			}
+			fmt.Printf("Game started for %s. Make moves with: move <actions> --as %s\n\n", player, player)
+			return observe()
+		},
+	}
+	play.Flags().StringVar(&player, "as", "", "model name the result is recorded under")
+	play.MarkFlagRequired("as")
+	for _, c := range []*cobra.Command{state, move, play} {
 		c.Flags().StringVar(&addr, "ui", "localhost:7810", "address of the running serve")
 		c.Flags().StringVar(&imagePath, "image", "", "write the faces as a PNG to this file instead of printing them as text")
 	}
 	move.Flags().StringVar(&by, "as", "cli", "player name shown in the page log")
-	return []*cobra.Command{state, move}
+	board := &cobra.Command{
+		Use:   "leaderboard",
+		Short: "Print the leaderboard computed from " + runsDir + "/" + gamesFile + ".jsonl",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			rows, err := leaderboard()
+			if err == nil {
+				printBoard(rows)
+			}
+			return err
+		},
+	}
+	return []*cobra.Command{state, move, play, board}
 }
 
 func showCmd() *cobra.Command {
