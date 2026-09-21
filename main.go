@@ -227,7 +227,7 @@ func playCmds() []*cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := cube.ApplyAll(args); err != nil {
+			if err := cube.ApplyAll(strings.Fields(strings.Join(args, " "))); err != nil {
 				return err
 			}
 			fmt.Println(cube.StateText(history))
@@ -239,7 +239,7 @@ func playCmds() []*cobra.Command {
 		Short: "Turn faces of the served cube, e.g. move R U R'",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			for _, m := range args {
+			for _, m := range strings.Fields(strings.Join(args, " ")) {
 				body, _ := json.Marshal(map[string]string{"move": m})
 				resp, err := http.Post("http://"+addr+"/api/move", "application/json", bytes.NewReader(body))
 				if err != nil {
