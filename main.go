@@ -200,6 +200,72 @@ func runOnServer(addr string, req StepRequest, scramble []string, maxMoves int) 
 	return nil
 }
 
+// servedCube fetches the session of a running `serve` and rebuilds its cube.
+func servedCube(addr string) (*Cube, []string, error) {
+	resp, err := http.Get("http://" + addr + "/api/state")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+	var st event
+	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+		return nil, nil, err
+	}
+	cube := NewCube()
+	cube.ApplyAll(st.Scramble)
+	return cube, st.History, cube.ApplyAll(st.History)
+}
+
+// playCmds are for a player other than Jev: read the served cube, think, move.
+func playCmds() []*cobra.Command {
+	var addr string
+	state := &cobra.Command{
+		Use:   "state [moves...]",
+		Short: "Print the served cube; with moves, print it as it would be after them (nothing is applied)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cube, history, err := servedCube(addr)
+			if err != nil {
+				return err
+			}
+			if err := cube.ApplyAll(args); err != nil {
+				return err
+			}
+			fmt.Println(cube.StateText(history))
+			return nil
+		},
+	}
+	move := &cobra.Command{
+		Use:   "move <moves...>",
+		Short: "Turn faces of the served cube, e.g. move R U R'",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			for _, m := range args {
+				body, _ := json.Marshal(map[string]string{"move": m})
+				resp, err := http.Post("http://"+addr+"/api/move", "application/json", bytes.NewReader(body))
+				if err != nil {
+					return err
+				}
+				msg, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if resp.StatusCode != http.StatusOK {
+					return fmt.Errorf("%s: %s", m, strings.TrimSpace(string(msg)))
+				}
+				time.Sleep(280 * time.Millisecond) // let the page finish the turn
+			}
+			cube, history, err := servedCube(addr)
+			if err != nil {
+				return err
+			}
+			fmt.Println(cube.StateText(history))
+			return nil
+		},
+	}
+	for _, c := range []*cobra.Command{state, move} {
+		c.Flags().StringVar(&addr, "ui", "localhost:7810", "address of the running serve")
+	}
+	return []*cobra.Command{state, move}
+}
+
 func showCmd() *cobra.Command {
 	var state bool
 	cmd := &cobra.Command{
@@ -258,6 +324,7 @@ func showCmd() *cobra.Command {
 func main() {
 	root := &cobra.Command{Use: "jev-playground", SilenceUsage: true}
 	root.AddCommand(serveCmd(), runCmd(), showCmd())
+	root.AddCommand(playCmds()...)
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}

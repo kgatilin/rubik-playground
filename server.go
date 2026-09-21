@@ -161,6 +161,12 @@ func (s *Session) routes(mux *http.ServeMux) {
 		w.Write(indexHTML)
 	})
 	mux.HandleFunc("/api/events", s.events)
+	mux.HandleFunc("/api/state", func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(event{Type: "sync", Scramble: s.scramble, History: s.history})
+	})
 	mux.HandleFunc("/api/reset", post(func(struct{}) (any, error) { s.Reset(); return struct{}{}, nil }))
 	mux.HandleFunc("/api/move", post(func(in struct{ Move string }) (any, error) { return struct{}{}, s.Move(in.Move) }))
 	mux.HandleFunc("/api/scramble", post(func(in struct {
