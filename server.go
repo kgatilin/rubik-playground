@@ -25,6 +25,7 @@ type Session struct {
 	run      string
 	scramble []string
 	history  []string
+	log      []event // scramble, move and decision events of the current game, replayed to a page that connects
 	subs     map[chan []byte]struct{}
 }
 
@@ -36,6 +37,7 @@ type event struct {
 	Scramble []string    `json:"scramble"`
 	History  []string    `json:"history"`
 	Record   *StepRecord `json:"record,omitempty"`
+	Log      []event     `json:"log,omitempty"` // sync only: the game so far, for the page log
 }
 
 var (
@@ -64,7 +66,12 @@ func newSession(jev *Jev) *Session {
 
 // publish sends an event to every connected page; callers hold s.mu.
 func (s *Session) publish(e event) {
-	e.Scramble, e.History = s.scramble, s.history
+	e.Scramble, e.History = slices.Clone(s.scramble), slices.Clone(s.history)
+	if e.Type == "sync" {
+		s.log = nil
+	} else {
+		s.log = append(s.log, e)
+	}
 	data, _ := json.Marshal(e)
 	for ch := range s.subs {
 		select {
@@ -91,7 +98,7 @@ func (s *Session) Scramble(moves []string) error {
 		}
 	}
 	s.scramble = append(append(s.scramble, s.history...), moves...)
-	s.history, s.run, s.gemini = nil, newRunID("ui"), map[string]*Gemini{}
+	s.history, s.run, s.gemini, s.log = nil, newRunID("ui"), map[string]*Gemini{}, nil
 	s.publish(event{Type: "scramble", Moves: moves})
 	return nil
 }
@@ -179,7 +186,7 @@ func (s *Session) events(w http.ResponseWriter, r *http.Request) {
 	ch := make(chan []byte, 256)
 	s.mu.Lock()
 	s.subs[ch] = struct{}{}
-	first, _ := json.Marshal(event{Type: "sync", Scramble: s.scramble, History: s.history})
+	first, _ := json.Marshal(event{Type: "sync", Scramble: s.scramble, History: s.history, Log: s.log})
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()

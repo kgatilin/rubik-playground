@@ -5,38 +5,61 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Jev cube</title>
 <style>
-  :root { --bg:#101216; --panel:#181b21; --line:#2a2f38; --fg:#e6e8ec; --dim:#8b93a1; --acc:#5fd0a5; --err:#ff7a7a; }
+  :root { --bg:#101216; --panel:#15181d; --card:#1b1f26; --line:#2a2f38; --fg:#e6e8ec; --dim:#8b93a1; --acc:#5fd0a5; --err:#ff7a7a; --warn:#e8b45a;
+          --mono:ui-monospace,SFMono-Regular,Menlo,monospace; --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
-         display:grid; grid-template-columns:minmax(0,1fr) 420px; height:100vh; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.45 var(--mono);
+         display:grid; grid-template-columns:minmax(0,1fr) minmax(440px,44vw); height:100vh; }
   #stage { position:relative; min-height:320px; }
   canvas { width:100%; height:100%; display:block; cursor:grab; touch-action:none; }
   canvas:active { cursor:grabbing; }
   #hud { position:absolute; left:16px; top:12px; color:var(--dim); pointer-events:none; }
-  #hud b { color:var(--fg); font-weight:600; }
-  #hud .ok { color:var(--acc); }
-  aside { background:var(--panel); border-left:1px solid var(--line); padding:16px; overflow:auto; display:flex; flex-direction:column; gap:14px; }
-  h2 { margin:0 0 6px; font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--dim); font-weight:600; }
-  button { background:#232833; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 10px; font:inherit; cursor:pointer; }
+  #hud b { color:var(--fg); font-weight:600; } #hud .ok { color:var(--acc); }
+
+  aside { background:var(--panel); border-left:1px solid var(--line); display:flex; flex-direction:column; min-height:0; height:100vh; }
+  .bar-top { display:flex; gap:6px; flex-wrap:wrap; align-items:center; padding:10px 14px; border-bottom:1px solid var(--line); }
+  button { background:#232833; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 10px; font:inherit; cursor:pointer; }
   button:hover { border-color:#4a5262; }
   button.go { background:var(--acc); color:#08130e; border-color:var(--acc); font-weight:600; }
   button:disabled { opacity:.4; cursor:default; }
-  .row { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
-  .moves button { width:44px; padding:6px 0; }
-  input[type=number] { width:64px; }
-  input, textarea, select { background:#0d0f13; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font:inherit; }
-  textarea, input[type=text] { width:100%; }
-  textarea { height:92px; resize:vertical; }
+  button.on { border-color:var(--acc); color:var(--acc); }
+  input, textarea, select { background:#0d0f13; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 8px; font:inherit; }
+  input[type=number] { width:60px; } #player { max-width:230px; } #thinking { max-width:150px; }
   label { color:var(--dim); display:flex; gap:6px; align-items:center; }
-  .bar { display:grid; grid-template-columns:34px 1fr 48px; gap:8px; align-items:center; }
-  .bar i { display:block; height:8px; background:var(--acc); border-radius:4px; min-width:1px; }
-  .bar span:last-child { color:var(--dim); text-align:right; }
-  #log { white-space:pre-wrap; color:var(--dim); max-height:45vh; overflow:auto; font-size:12px; }
-  #log .e { color:var(--err); }
-  #log details { margin:2px 0 6px; } #log details div { border-left:2px solid var(--line); padding-left:8px; margin-top:4px; }
-  details pre { font-size:11px; color:var(--dim); white-space:pre-wrap; word-break:break-word; max-height:260px; overflow:auto; margin:6px 0 0; }
-  summary { cursor:pointer; color:var(--dim); }
-  @media (max-width:860px) { body { grid-template-columns:1fr; grid-template-rows:55vh auto; height:auto; } aside { border-left:0; border-top:1px solid var(--line); } }
+  .row { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+
+  #settings { border-bottom:1px solid var(--line); }
+  #settings > summary { padding:8px 14px; cursor:pointer; color:var(--dim); font-size:11px; letter-spacing:.1em; text-transform:uppercase; list-style-position:inside; }
+  #settings .body { padding:4px 14px 14px; display:flex; flex-direction:column; gap:10px; max-height:46vh; overflow:auto; }
+  #settings textarea, #settings input[type=text] { width:100%; } #settings textarea { height:76px; resize:vertical; }
+  .moves button { width:40px; padding:5px 0; }
+  h3 { margin:0 0 4px; font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--dim); font-weight:600; }
+
+  .log-head { display:flex; align-items:center; gap:8px; padding:8px 14px; color:var(--dim); font-size:11px; letter-spacing:.1em; text-transform:uppercase; }
+  .log-head .sp { flex:1; } .log-head button { font-size:11px; padding:3px 8px; text-transform:none; letter-spacing:0; }
+  #log { flex:1; min-height:0; overflow:auto; padding:0 14px 14px; display:flex; flex-direction:column; gap:8px; scroll-behavior:smooth; }
+  .note { color:var(--dim); padding:2px 2px; } .note.e { color:var(--err); } .note b { color:var(--fg); font-weight:600; }
+  .sep { display:flex; align-items:center; gap:10px; color:var(--dim); margin:6px 0 2px; }
+  .sep::before, .sep::after { content:""; flex:1; border-top:1px solid var(--line); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; }
+  .card.latest { border-color:#3c4656; }
+  .card > header { display:flex; gap:10px; align-items:baseline; padding:8px 10px; cursor:pointer; flex-wrap:wrap; }
+  .card .n { color:var(--dim); min-width:34px; }
+  .chips { display:flex; gap:4px; flex-wrap:wrap; }
+  .chip { background:#0d0f13; border:1px solid var(--line); border-radius:4px; padding:0 6px; font-weight:600; }
+  .card .who { color:var(--dim); } .card .meta { color:var(--dim); margin-left:auto; white-space:nowrap; }
+  .delta.up { color:var(--acc); } .delta.down { color:var(--err); } .delta.flat { color:var(--dim); }
+  .card .body { padding:0 10px 10px; display:none; } .card.open .body { display:block; }
+  .card .peek { margin:0 10px 9px; color:var(--dim); font:13px/1.5 var(--sans); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; cursor:pointer; }
+  .card.open .peek { display:none; }
+  .thoughts { font:13.5px/1.6 var(--sans); color:#cfd3da; max-width:72ch; }
+  .thoughts p { margin:0 0 .75em; } .thoughts strong { color:var(--fg); } .thoughts code { font:12px var(--mono); background:#0d0f13; padding:0 4px; border-radius:3px; }
+  .pbar { display:grid; grid-template-columns:34px 1fr 48px; gap:8px; align-items:center; }
+  .pbar i { display:block; height:7px; background:var(--acc); border-radius:4px; min-width:1px; opacity:.85; }
+  .pbar span:last-child { color:var(--dim); text-align:right; }
+  .sub { margin-top:8px; } .sub > summary { color:var(--dim); cursor:pointer; }
+  .sub pre { font:11.5px/1.45 var(--mono); color:var(--dim); white-space:pre-wrap; word-break:break-word; margin:6px 0 0; }
+  @media (max-width:900px) { body { grid-template-columns:1fr; grid-template-rows:48vh auto; height:auto; } aside { height:auto; border-left:0; border-top:1px solid var(--line); } #log { max-height:70vh; } }
 </style>
 </head>
 <body>
@@ -45,54 +68,49 @@
   <div id="hud"></div>
 </div>
 <aside>
-  <section>
-    <h2>Cube</h2>
-    <div class="row moves" id="manual"></div>
-    <div class="row" style="margin-top:8px">
-      <button id="scramble">Scramble</button>
-      <input id="scrambleN" type="number" min="1" max="60" value="6" title="scramble length">
-      <button id="reset">Reset</button>
-      <label style="margin-left:auto">keys: u d l r f b, shift = prime</label>
+  <div class="bar-top">
+    <select id="player" title="built-in player"></select>
+    <select id="thinking" title="Gemini thinking level"><option value="">thinking: default</option><option>minimal</option><option>low</option><option>medium</option><option>high</option></select>
+    <button class="go" id="run">Run</button>
+    <button id="step">Step</button>
+    <button id="stop" disabled>Stop</button>
+    <span style="flex:1"></span>
+    <button id="scramble">Scramble</button>
+    <input id="scrambleN" type="number" min="1" max="60" value="20" title="scramble length">
+    <button id="reset">Reset</button>
+  </div>
+
+  <details id="settings">
+    <summary>Settings</summary>
+    <div class="body">
+      <div>
+        <h3>Turn a face</h3>
+        <div class="row moves" id="manual"></div>
+        <label style="margin-top:4px">keys: u d l r f b, shift = counter-clockwise</label>
+      </div>
+      <div>
+        <h3>Moves offered per decision</h3>
+        <input id="moves" type="text" value="U U' U2 D D' D2 L L' L2 R R' R2 F F' F2 B B' B2">
+      </div>
+      <div>
+        <h3>Instructions (Jev)</h3>
+        <textarea id="instr">You are solving a 3x3 Rubik's cube. Pick the single next move that brings the cube closer to the solved state, where every face shows one colour. Do not undo the previous move and do not repeat a cycle from the move history.</textarea>
+      </div>
+      <div class="row">
+        <label><input id="sample" type="checkbox"> sample from probabilities</label>
+        <label><input id="noUndo" type="checkbox" checked> hide the undo move</label>
+        <label><input id="shuffle" type="checkbox" checked> shuffle option order</label>
+        <label><input id="lookahead" type="checkbox" checked> lookahead (sticker count per move)</label>
+      </div>
+      <div class="row"><label>decisions max</label><input id="maxSteps" type="number" min="1" max="500" value="100" title="the game itself ends at 100 face turns"></div>
     </div>
-  </section>
-
-  <section>
-    <h2>Player</h2>
-    <div class="row"><select id="player"></select>
-      <select id="thinking" title="Gemini thinking level"><option value="">thinking: default</option><option>minimal</option><option>low</option><option>medium</option><option>high</option></select><label>built-in player; CLI agents use <b>state</b> / <b>move</b></label></div>
-    <label style="margin-top:8px">Moves offered per step</label>
-    <input id="moves" type="text" value="U U' U2 D D' D2 L L' L2 R R' R2 F F' F2 B B' B2">
-    <label style="margin-top:8px">Instructions (Jev)</label>
-    <textarea id="instr">You are solving a 3x3 Rubik's cube. Pick the single next move that brings the cube closer to the solved state, where every face shows one colour. Do not undo the previous move and do not repeat a cycle from the move history.</textarea>
-    <div class="row" style="margin-top:8px">
-      <label><input id="sample" type="checkbox"> sample from probabilities</label>
-      <label><input id="noUndo" type="checkbox" checked> hide the undo move</label>
-      <label><input id="shuffle" type="checkbox" checked> shuffle option order</label>
-      <label><input id="lookahead" type="checkbox" checked> lookahead: each move lists the sticker count it leads to</label>
-    </div>
-    <div class="row" style="margin-top:10px">
-      <button class="go" id="run">Run</button>
-      <input id="maxSteps" type="number" min="1" max="500" value="100" title="max decisions; the game itself ends at 100 face turns">
-      <label>decisions max</label>
-      <button id="step">Step</button>
-      <button id="stop" disabled>Stop</button>
-    </div>
-  </section>
-
-  <section>
-    <h2>Last decision</h2>
-    <div id="probs"><span style="color:var(--dim)">no decisions yet</span></div>
-  </section>
-
-  <section>
-    <h2>Log</h2>
-    <div id="log"></div>
-  </section>
-
-  <details>
-    <summary>Last step record</summary>
-    <pre id="raw"></pre>
   </details>
+
+  <div class="log-head"><span>Game log</span><span id="runName"></span><span class="sp"></span>
+    <button id="expandAll" title="open or close every decision">expand all</button>
+    <button id="follow" class="on" title="keep the newest entry in view">follow</button>
+  </div>
+  <div id="log"></div>
 </aside>
 
 <script>
@@ -226,6 +244,7 @@ canvas.addEventListener('pointercancel', () => drag = null);
 
 // ---------- UI ----------
 const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
 let stats = { calls: 0, ms: 0, tokens: 0 };
 
 function updateHud() {
@@ -234,18 +253,91 @@ function updateHud() {
     + `<br>face turns <b>${history.length}</b> / 100`
     + (stats.calls ? `<br>decisions <b>${stats.calls}</b> · avg <b>${Math.round(stats.ms / stats.calls)} ms</b> · <b>${stats.tokens}</b> input tokens` : '');
 }
-function log(text, err, more) {
-  const d = document.createElement('div'); d.textContent = text; if (err) d.className = 'e';
-  if (more) {   // expandable body, e.g. a model's thought summary
-    const det = document.createElement('details'), sum = document.createElement('summary'), body = document.createElement('div');
-    sum.textContent = 'thoughts'; body.textContent = more; det.append(sum, body); d.append(det);
+
+// ---------- game log ----------
+// The log is the main reading surface: one card per decision, grouped lines for
+// moves made by hand or by CLI agents, separators for scrambles.
+const logEl = $('log');
+let follow = true, allOpen = location.hash === '#open', lastMoves = null;   // #open: every decision expanded
+function add(node) {
+  logEl.append(node);
+  if (follow) logEl.scrollTop = logEl.scrollHeight;
+  return node;
+}
+function note(html, err) {
+  lastMoves = null;
+  const d = document.createElement('div'); d.className = 'note' + (err ? ' e' : ''); d.innerHTML = html;
+  return add(d);
+}
+const log = (text, err) => note(esc(text), err);
+function separator(text) {
+  lastMoves = null;
+  const d = document.createElement('div'); d.className = 'sep'; d.textContent = text;
+  return add(d);
+}
+// Consecutive moves by the same player share one line.
+function logMove(move, by, n) {
+  if (!lastMoves || lastMoves.by !== by) {
+    const d = note(`<b>${esc(by)}</b> <span class="chips"></span>`);
+    d.style.display = 'flex'; d.style.gap = '8px'; d.style.flexWrap = 'wrap';
+    lastMoves = { by, chips: d.querySelector('.chips') };
   }
-  $('log').prepend(d);
+  lastMoves.chips.insertAdjacentHTML('beforeend', `<span class="chip" title="face turn #${n}">${esc(move)}</span>`);
+  if (follow) logEl.scrollTop = logEl.scrollHeight;
+}
+// Thought summaries come as light markdown: paragraphs, **bold**, `code`.
+function renderThoughts(text) {
+  return text.trim().split(/\n\s*\n/).map(p =>
+    '<p>' + esc(p).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\n/g, '<br>') + '</p>').join('');
+}
+function decisionCard(r) {
+  lastMoves = null;
+  const d = r.matched_after - r.matched_before, probs = Object.entries(r.probabilities || {}).sort((a, b) => b[1] - a[1]);
+  const card = document.createElement('div'); card.className = 'card' + (allOpen ? ' open' : '');
+  const first = r.step, last = r.step + r.moves.length - 1;
+  card.innerHTML =
+    `<header><span class="n">#${first}${last > first ? '–' + last : ''}</span>`
+    + `<span class="chips">${r.moves.map(m => `<span class="chip">${esc(m)}</span>`).join('') || '<span class="who">no move</span>'}</span>`
+    + `<span class="who">${esc(r.request.player)}</span>`
+    + `<span class="meta"><span class="delta ${d > 0 ? 'up' : d < 0 ? 'down' : 'flat'}">${r.matched_before}→${r.matched_after}</span>`
+    + `${probs.length ? ' · conf ' + r.confidence.toFixed(2) : ''} · ${r.ms >= 10000 ? (r.ms / 1000).toFixed(0) + ' s' : r.ms + ' ms'}</span></header>`
+    + (r.thoughts ? `<div class="peek">${esc(r.thoughts.replace(/\*\*/g, '').replace(/\s+/g, ' ').trim())}</div>` : '')
+    + `<div class="body">`
+    + (r.thoughts ? `<div class="thoughts">${renderThoughts(r.thoughts)}</div>` : '')
+    + probs.slice(0, 6).map(([m, p]) => `<div class="pbar"><span>${r.moves.includes(m) ? '<b>' + esc(m) + '</b>' : esc(m)}</span><span><i style="width:${p * 100}%"></i></span><span>${(p * 100).toFixed(1)}%</span></div>`).join('')
+    + `<details class="sub"><summary>observation the player saw</summary><pre>${esc(r.state)}</pre></details>`
+    + `<details class="sub"><summary>record · ${esc(r.model || '')} · ${r.input_tokens} in${r.output_tokens ? ' / ' + r.output_tokens + ' out' : ''} tokens</summary><pre>${esc(JSON.stringify({ ...r, state: undefined, thoughts: undefined }, null, 2))}</pre></details>`
+    + `</div>`;
+  const toggle = () => card.classList.toggle('open');
+  card.querySelector('header').onclick = toggle;
+  card.querySelector('.peek')?.addEventListener('click', toggle);
+  logEl.querySelector('.card.latest')?.classList.remove('latest');
+  card.classList.add('latest');
+  stats.calls++; stats.ms += r.ms; stats.tokens += r.input_tokens;
+  $('runName').textContent = 'runs/' + r.request.run + '.jsonl';
+  return add(card);
+}
+if (allOpen) $('expandAll').textContent = 'collapse all';
+$('follow').onclick = () => { follow = !follow; $('follow').classList.toggle('on', follow); if (follow) logEl.scrollTop = logEl.scrollHeight; };
+$('expandAll').onclick = () => {
+  allOpen = !allOpen; $('expandAll').textContent = allOpen ? 'collapse all' : 'expand all';
+  logEl.querySelectorAll('.card').forEach(c => c.classList.toggle('open', allOpen));
+};
+logEl.addEventListener('wheel', () => {   // scrolling up to read pauses following
+  const atEnd = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40;
+  if (follow !== atEnd) { follow = atEnd; $('follow').classList.toggle('on', follow); }
+}, { passive: true });
+
+const builtIn = by => /^(jev$|gemini:)/.test(by || '');
+function logEvent(e) {
+  if (e.type === 'decision') decisionCard(e.record);
+  else if (e.type === 'scramble') separator(`scramble · ${e.moves.length} moves`);
+  else if (e.type === 'move' && !builtIn(e.by)) logMove(e.move, e.by || 'unknown', e.history.length);
 }
 
 // ---------- server session ----------
 // The cube lives on the server. Buttons post commands; every change (from this page,
-// another page or `jev-playground run --ui`) comes back on the event stream and is drawn here.
+// another page or the CLI) comes back on the event stream and is drawn here.
 async function post(path, body = {}) {
   const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const text = await res.text();
@@ -254,37 +346,26 @@ async function post(path, body = {}) {
 }
 const send = (path, body) => post(path, body).catch(e => log(e.message, true));
 
-function showDecision(r) {
-  stats.calls++; stats.ms += r.ms; stats.tokens += r.input_tokens;
-  const moves = r.moves.join(' '), probs = r.probabilities || {};
-  const top = Object.entries(probs).sort((x, y) => y[1] - x[1]).slice(0, 6);
-  $('probs').innerHTML = (top.length ? top.map(([m, p]) =>
-    `<div class="bar"><span>${m === moves ? '<b>' + m + '</b>' : m}</span><span><i style="width:${p * 100}%"></i></span><span>${(p * 100).toFixed(1)}%</span></div>`).join('')
-    : `<div><b>${moves}</b></div>`)
-    + `<div style="color:var(--dim);margin-top:6px">${top.length ? 'confidence ' + r.confidence.toFixed(2) + ' · ' : ''}${r.ms} ms · ${r.model} · runs/${r.request.run}.jsonl</div>`;
-  $('raw').textContent = JSON.stringify(r, null, 2);
-  log(`#${r.step} ${moves}  ${r.request.player}${top.length ? '  p=' + (probs[moves] ?? 0).toFixed(2) : ''}  ${r.matched_before}→${r.matched_after}  ${r.ms} ms`, false, r.thoughts);
-}
-
 const stream = new EventSource('/api/events');
 stream.onmessage = msg => {
   const e = JSON.parse(msg.data);
-  if (e.type === 'decision') return showDecision(e.record);
-  if (e.type === 'move') {
-    if (!/^(jev$|gemini:)/.test(e.by || '')) log(`#${e.history.length} ${e.move}  by ${e.by || 'unknown'}`);   // jev moves are logged with their decision
-    return turn(e.move);
-  }
-  if (e.type === 'scramble') {
-    e.moves.forEach(mv => turn(mv, 70, false));
-    chain = chain.then(() => { history = []; updateHud(); log('scramble: ' + e.moves.join(' ')); });
+  if (e.type === 'sync') {   // rebuild without animation, replay the game log
+    chain = chain.then(() => {
+      resetCube();
+      [...(e.scramble || []), ...(e.history || [])].forEach(mv => commit(parseMove(mv)));
+      history = e.history || [];
+      logEl.textContent = ''; lastMoves = null; stats = { calls: 0, ms: 0, tokens: 0 }; $('runName').textContent = '';
+      (e.log || []).forEach(logEvent);
+      updateHud();
+    });
     return;
   }
-  chain = chain.then(() => {   // sync: rebuild without animation
-    resetCube();
-    [...(e.scramble || []), ...(e.history || [])].forEach(mv => commit(parseMove(mv)));
-    history = e.history || [];
-    updateHud();
-  });
+  logEvent(e);
+  if (e.type === 'move') turn(e.move);
+  if (e.type === 'scramble') {
+    e.moves.forEach(mv => turn(mv, 70, false));
+    chain = chain.then(() => { history = []; updateHud(); });
+  }
 };
 stream.onerror = () => log('event stream lost, reconnecting', true);
 
@@ -293,20 +374,20 @@ for (const f of 'UDLRFB') for (const m of ['', "'"]) {
   $('manual').append(b);
 }
 addEventListener('keydown', e => {
-  if (e.target.matches('input, textarea') || e.metaKey || e.ctrlKey) return;
+  if (e.target.matches('input, textarea, select') || e.metaKey || e.ctrlKey) return;
   const f = e.key.toUpperCase();
   if (AXIS[f]) send('/api/move', { move: f + (e.shiftKey ? "'" : ''), by: 'page' });
 });
 $('reset').onclick = () => send('/api/reset');
-$('scramble').onclick = () => send('/api/scramble', { len: +$('scrambleN').value || 6 });
+$('scramble').onclick = () => send('/api/scramble', { len: +$('scrambleN').value || 20 });
 
-// ---------- Jev ----------
+// ---------- built-in players ----------
+const showThinking = () => { $('thinking').style.display = $('player').value.startsWith('gemini:') ? '' : 'none'; };
 fetch('/api/players').then(r => r.json()).then(list => {
-  $('player').innerHTML = list.map(p => `<option>${p}</option>`).join('');
+  $('player').innerHTML = list.map(p => `<option>${esc(p)}</option>`).join('');
   try { const saved = localStorage.getItem('player'); if (list.includes(saved)) $('player').value = saved; } catch {}
   showThinking();
 });
-const showThinking = () => { $('thinking').style.display = $('player').value.startsWith('gemini:') ? '' : 'none'; };
 $('player').onchange = () => { showThinking(); try { localStorage.setItem('player', $('player').value); } catch {} };
 const playerId = () => $('player').value + ($('player').value.startsWith('gemini:') && $('thinking').value ? '@' + $('thinking').value : '');
 
@@ -324,7 +405,10 @@ async function run(limit) {
       last = await post('/api/step', stepRequest());
       if (last.solved) { done++; break; }
     }
-    if (limit > 1 && last) log(`run ended after ${done} moves: ${last.solved ? 'solved' : last.matched_after + '/54 stickers in place'}`);
+    if (limit > 1 && last) {
+      const turns = last.step + last.moves.length - 1;
+      note(last.solved ? `<b>solved</b> in ${turns} face turns, ${done} decisions` : `stopped after ${done} decisions, ${turns} face turns: ${last.matched_after}/54 stickers in place`);
+    }
   } catch (e) { log(e.message, true); }
   running = false; $('run').disabled = $('step').disabled = false; $('stop').disabled = true;
 }

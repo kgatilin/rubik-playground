@@ -134,7 +134,11 @@ Stated so results are read correctly; none of it is compensated unless listed.
 - `server.go` — `Session` (the served cube), SSE event stream `/api/events`, commands
   `/api/reset`, `/api/scramble`, `/api/move`, `/api/step`. The page only renders events.
 - `main.go` — cobra commands: `serve`, `run [--ui]`, `show`, `state`, `move`.
-- `index.html` — canvas cube and control panel, embedded into the binary.
+- `index.html` — canvas cube and the game log, embedded into the binary. The log is the
+  main surface: one card per decision (moves, sticker delta, probabilities or thought
+  summary, the observation the player saw, the raw record), grouped lines for moves by
+  CLI agents or by hand. The server replays the current game's events on connect
+  (`sync.log`), so the log survives a reload. `#open` in the URL expands every card.
 
 Build and check: `go vet ./... && go test ./... && go build -o jev-playground .`
 After changing `index.html` or Go code, restart `serve` (the page is embedded).
