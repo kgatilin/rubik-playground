@@ -218,16 +218,14 @@ func servedCube(addr string) (*Cube, []string, error) {
 
 // playCmds are for a player other than Jev: read the served cube, think, move.
 func playCmds() []*cobra.Command {
-	var addr string
+	var addr, by string
 	state := &cobra.Command{
-		Use:   "state [moves...]",
-		Short: "Print the served cube; with moves, print it as it would be after them (nothing is applied)",
+		Use:   "state",
+		Short: "Print the served cube: the same observation every player gets",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cube, history, err := servedCube(addr)
 			if err != nil {
-				return err
-			}
-			if err := cube.ApplyAll(strings.Fields(strings.Join(args, " "))); err != nil {
 				return err
 			}
 			fmt.Println(cube.StateText(history))
@@ -240,7 +238,7 @@ func playCmds() []*cobra.Command {
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			for _, m := range strings.Fields(strings.Join(args, " ")) {
-				body, _ := json.Marshal(map[string]string{"move": m})
+				body, _ := json.Marshal(map[string]string{"move": m, "by": by})
 				resp, err := http.Post("http://"+addr+"/api/move", "application/json", bytes.NewReader(body))
 				if err != nil {
 					return err
@@ -263,6 +261,7 @@ func playCmds() []*cobra.Command {
 	for _, c := range []*cobra.Command{state, move} {
 		c.Flags().StringVar(&addr, "ui", "localhost:7810", "address of the running serve")
 	}
+	move.Flags().StringVar(&by, "as", "cli", "player name shown in the page log")
 	return []*cobra.Command{state, move}
 }
 

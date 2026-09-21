@@ -24,6 +24,7 @@ type Session struct {
 type event struct {
 	Type     string      `json:"type"` // sync | move | scramble | decision
 	Move     string      `json:"move,omitempty"`
+	By       string      `json:"by,omitempty"` // who made the move: jev, page, cli, or an agent name
 	Moves    []string    `json:"moves,omitempty"`
 	Scramble []string    `json:"scramble"`
 	History  []string    `json:"history"`
@@ -70,14 +71,14 @@ func (s *Session) Scramble(moves []string) error {
 	return nil
 }
 
-func (s *Session) Move(m string) error {
+func (s *Session) Move(m, by string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !ValidMove(m) {
 		return fmt.Errorf("unknown move %q", m)
 	}
 	s.history = append(s.history, m)
-	s.publish(event{Type: "move", Move: m})
+	s.publish(event{Type: "move", Move: m, By: by})
 	return nil
 }
 
@@ -98,7 +99,7 @@ func (s *Session) Step(req StepRequest) (*StepRecord, error) {
 	}
 	s.history = append(s.history, rec.Move)
 	s.publish(event{Type: "decision", Record: rec})
-	s.publish(event{Type: "move", Move: rec.Move})
+	s.publish(event{Type: "move", Move: rec.Move, By: "jev"})
 	return rec, nil
 }
 
@@ -168,7 +169,7 @@ func (s *Session) routes(mux *http.ServeMux) {
 		json.NewEncoder(w).Encode(event{Type: "sync", Scramble: s.scramble, History: s.history})
 	})
 	mux.HandleFunc("/api/reset", post(func(struct{}) (any, error) { s.Reset(); return struct{}{}, nil }))
-	mux.HandleFunc("/api/move", post(func(in struct{ Move string }) (any, error) { return struct{}{}, s.Move(in.Move) }))
+	mux.HandleFunc("/api/move", post(func(in struct{ Move, By string }) (any, error) { return struct{}{}, s.Move(in.Move, in.By) }))
 	mux.HandleFunc("/api/scramble", post(func(in struct {
 		Moves []string
 		Len   int

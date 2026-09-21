@@ -31,7 +31,7 @@
   .bar { display:grid; grid-template-columns:34px 1fr 48px; gap:8px; align-items:center; }
   .bar i { display:block; height:8px; background:var(--acc); border-radius:4px; min-width:1px; }
   .bar span:last-child { color:var(--dim); text-align:right; }
-  #log { white-space:pre-wrap; color:var(--dim); max-height:220px; overflow:auto; font-size:12px; }
+  #log { white-space:pre-wrap; color:var(--dim); max-height:45vh; overflow:auto; font-size:12px; }
   #log .e { color:var(--err); }
   details pre { font-size:11px; color:var(--dim); white-space:pre-wrap; word-break:break-word; max-height:260px; overflow:auto; margin:6px 0 0; }
   summary { cursor:pointer; color:var(--dim); }
@@ -262,7 +262,10 @@ const stream = new EventSource('/api/events');
 stream.onmessage = msg => {
   const e = JSON.parse(msg.data);
   if (e.type === 'decision') return showDecision(e.record);
-  if (e.type === 'move') return turn(e.move);
+  if (e.type === 'move') {
+    if (e.by !== 'jev') log(`#${e.history.length} ${e.move}  by ${e.by || 'unknown'}`);   // jev moves are logged with their decision
+    return turn(e.move);
+  }
   if (e.type === 'scramble') {
     e.moves.forEach(mv => turn(mv, 70, false));
     chain = chain.then(() => { history = []; updateHud(); log('scramble: ' + e.moves.join(' ')); });
@@ -278,13 +281,13 @@ stream.onmessage = msg => {
 stream.onerror = () => log('event stream lost, reconnecting', true);
 
 for (const f of 'UDLRFB') for (const m of ['', "'"]) {
-  const b = document.createElement('button'); b.textContent = f + m; b.onclick = () => send('/api/move', { move: f + m });
+  const b = document.createElement('button'); b.textContent = f + m; b.onclick = () => send('/api/move', { move: f + m, by: 'page' });
   $('manual').append(b);
 }
 addEventListener('keydown', e => {
   if (e.target.matches('input, textarea') || e.metaKey || e.ctrlKey) return;
   const f = e.key.toUpperCase();
-  if (AXIS[f]) send('/api/move', { move: f + (e.shiftKey ? "'" : '') });
+  if (AXIS[f]) send('/api/move', { move: f + (e.shiftKey ? "'" : ''), by: 'page' });
 });
 $('reset').onclick = () => send('/api/reset');
 $('scramble').onclick = () => send('/api/scramble', { len: +$('scrambleN').value || 6 });
