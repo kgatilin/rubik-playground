@@ -61,7 +61,7 @@ turn accounting and the same log:
 
 ### Rules for external (CLI) players
 
-- Allowed commands: `jev-playground play --as <name> [--image <file>]`, `jev-playground state [--image <file>]`, `jev-playground move <actions> --as <name> [--image <file>]`,
+- Allowed commands: `jev-playground play --as <name>`, `jev-playground state`, `jev-playground move <actions> --as <name>` (each takes `--pieces` or `--image <file>`),
   `jev-playground actions` **(proposed)**. Nothing else touches the cube.
 - No scripts, loops, solvers or simulation of the cube in code. The cube is simulated
   only in the player's head. `state` takes no cube arguments for this reason; `--image` only
@@ -88,15 +88,19 @@ The observation has no per-player switches. `--no-undo` (the inverse of the prev
 move is not offered) and `--shuffle` (option order) act on the action list of built-in
 players only.
 
-`observation` is a game setting, recorded in the log: `text` (default) or `image`. With
+`observation` is a game setting, recorded in the log: `text` (default), `pieces` or
+`image`. With `pieces` the six face rows are replaced by the 8 corner and 12 edge places
+(`Cube.piecesText`), one line each: the sticker on every face of the place and the place
+the piece belongs to, e.g. `UFR: U=G F=Y R=R (belongs at DFR)`; a piece at home reads
+`solved`, `flipped` or `twisted`. This hands the player piece identity, which `text` and
+`image` leave to be derived. CLI agents get it with `--pieces`. With
 `image` the six face rows are replaced by one PNG (`Cube.StateImage`, `image.go`): the
 unfolded net (U / L F R B / D) and two corner views (from U-F-R, from D-B-L), face letters
 on the centre stickers. Everything else (sticker count, layer progress, turns, history)
 stays text. Gemini gets the picture as an inline part of the first message and inside each
 tool response; a CLI agent gets it with `--image <file>`; Jev takes text only and refuses
 the mode. The page picks it with the "faces" selector next to the player, and a decision
-card shows the picture the player saw. Games with `image` are a separate category from
-games with `text`.
+card shows the picture the player saw. Each observation mode is its own leaderboard category.
 
 `lookahead` (each action's criteria lists the sticker count it leads to) is a game
 setting, recorded in the log. It is search done by the harness, so games played with it
@@ -134,7 +138,7 @@ Stated so results are read correctly; none of it is compensated unless listed.
 - **Decisions per look.** A built-in player acts once per observation. A CLI agent may
   send a long action list after one look. The score counts face turns, so this changes
   the number of calls and nothing else.
-- **Piece identity.** The observation is facelets only: which three stickers form one
+- **Piece identity.** Outside the `pieces` observation, the observation is facelets only: which three stickers form one
   corner has to be derived from the stated face orientation. Same for everyone.
 - **Prior knowledge.** Bundles hand every player the standard algorithms; knowing when
   to use them is the test.

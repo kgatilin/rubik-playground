@@ -56,11 +56,11 @@ type PlayRequest struct {
 func (s *Session) Play(in PlayRequest) (*Game, error) {
 	in.Player = strings.TrimSpace(in.Player)
 	in.Observation = cmp.Or(in.Observation, obsText)
-	switch {
-	case in.Player == "":
+	if in.Player == "" {
 		return nil, errors.New("a game needs a player name")
-	case in.Observation != obsText && in.Observation != obsImage:
-		return nil, fmt.Errorf("unknown observation %q: use %s or %s", in.Observation, obsText, obsImage)
+	}
+	if err := validObservation(in.Observation); err != nil {
+		return nil, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -34,11 +34,11 @@ type StepRequest struct {
 	History      []string `json:"history"`
 	Options      []string `json:"options"`
 	Instructions string   `json:"instructions"`
-	Sample       bool     `json:"sample"`    // draw the move from the probabilities instead of taking the top one
-	NoUndo       bool     `json:"no_undo"`   // do not offer the inverse of the previous move
-	Shuffle      bool     `json:"shuffle"`   // randomise the order in which moves are listed
-	Lookahead    bool     `json:"lookahead"` // describe each move by the sticker count it leads to
-	Observation  string   `json:"observation,omitempty"` // how the faces are shown: "text" (default) or "image"
+	Sample       bool     `json:"sample"`                // draw the move from the probabilities instead of taking the top one
+	NoUndo       bool     `json:"no_undo"`               // do not offer the inverse of the previous move
+	Shuffle      bool     `json:"shuffle"`               // randomise the order in which moves are listed
+	Lookahead    bool     `json:"lookahead"`             // describe each move by the sticker count it leads to
+	Observation  string   `json:"observation,omitempty"` // how the faces are shown: "text" (default), "pieces" or "image"
 }
 
 // StepRecord is the outcome of one decision and one line of runs/<run>.jsonl.
@@ -120,8 +120,8 @@ func prepareStep(req StepRequest) (*Cube, []string, error) {
 	if len(offered) == 0 {
 		return nil, nil, fmt.Errorf("no moves offered")
 	}
-	if o := req.Observation; o != "" && o != obsText && o != obsImage {
-		return nil, nil, fmt.Errorf("unknown observation %q: use %s or %s", o, obsText, obsImage)
+	if err := validObservation(req.Observation); err != nil {
+		return nil, nil, err
 	}
 	if req.Shuffle {
 		rand.Shuffle(len(offered), func(a, b int) { offered[a], offered[b] = offered[b], offered[a] })
@@ -155,7 +155,7 @@ func (j *Jev) Decide(req StepRequest) (*StepRecord, error) {
 		return nil, err
 	}
 	rec := &StepRecord{Time: time.Now().UTC(), Step: len(req.History) + 1, Request: req, Offered: offered,
-		State: cube.StateText(req.History, req.Limit, obsText), MatchedBefore: cube.Matched()}
+		State: cube.StateText(req.History, req.Limit, req.Observation), MatchedBefore: cube.Matched()}
 
 	criteria := make(orderedCriteria, len(offered))
 	for i, m := range offered {

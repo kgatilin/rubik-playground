@@ -57,3 +57,17 @@ func TestProgress(t *testing.T) {
 		t.Errorf("after F: %+v", got)
 	}
 }
+
+func TestPiecesText(t *testing.T) {
+	c := NewCube()
+	if got := c.piecesText(); strings.Count(got, "(solved)") != 20 {
+		t.Fatalf("solved cube:\n%s", got)
+	}
+	c.Apply("R") // the DFR corner comes up to UFR: green on top, yellow in front
+	got := c.piecesText()
+	for _, want := range []string{"UFR: U=G F=Y R=R (belongs at DFR)\n", "UR: U=G R=R (belongs at FR)\n", "UFL: U=W F=G L=O (solved)\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+}

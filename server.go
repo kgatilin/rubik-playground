@@ -39,7 +39,7 @@ type event struct {
 	History  []string    `json:"history"`
 	Record   *StepRecord `json:"record,omitempty"`
 	Game     *Game       `json:"game,omitempty"` // game: opened (no outcome) or closed
-	Log      []event     `json:"log,omitempty"` // sync only: the game so far, for the page log
+	Log      []event     `json:"log,omitempty"`  // sync only: the game so far, for the page log
 }
 
 var (

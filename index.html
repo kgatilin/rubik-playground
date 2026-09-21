@@ -77,7 +77,7 @@
   <div class="bar-top">
     <select id="player" title="built-in player"></select>
     <select id="thinking" title="Gemini thinking level"><option value="">thinking: default</option><option>minimal</option><option>low</option><option>medium</option><option>high</option></select>
-    <select id="observation" title="how the faces are shown to the player"><option value="text">faces: text</option><option value="image">faces: image</option></select>
+    <select id="observation" title="how the faces are shown to the player"><option value="text">faces: text</option><option value="pieces">faces: pieces</option><option value="image">faces: image</option></select>
     <button class="go" id="play" title="leaderboard game: fresh 20-move scramble, then run">Play</button>
     <button id="run" title="keep playing the current cube">Run</button>
     <button id="step">Step</button>
@@ -405,7 +405,12 @@ function loadBoard() {
 loadBoard();
 
 // ---------- built-in players ----------
-const showThinking = () => { for (const id of ['thinking', 'observation']) $(id).style.display = $('player').value.startsWith('gemini:') ? '' : 'none'; };
+const showThinking = () => {
+  const gemini = $('player').value.startsWith('gemini:');
+  $('thinking').style.display = gemini ? '' : 'none';
+  $('observation').querySelector('[value=image]').disabled = !gemini;   // Jev takes text only
+  if (!gemini && $('observation').value === 'image') $('observation').value = 'text';
+};
 fetch('/api/players').then(r => r.json()).then(list => {
   $('player').innerHTML = list.map(p => `<option>${esc(p)}</option>`).join('');
   try { const saved = localStorage.getItem('player'); if (list.includes(saved)) $('player').value = saved; } catch {}
@@ -417,7 +422,7 @@ const playerId = () => $('player').value + ($('player').value.startsWith('gemini
 const stepRequest = () => ({ player: playerId(), options: $('moves').value.trim().split(/[\s,]+/).filter(Boolean),
   instructions: $('instr').value, sample: $('sample').checked, no_undo: $('noUndo').checked,
   shuffle: $('shuffle').checked, lookahead: $('lookahead').checked,
-  observation: $('player').value.startsWith('gemini:') ? $('observation').value : 'text' });
+  observation: $('observation').value });
 
 let running = false;
 async function run(limit) {

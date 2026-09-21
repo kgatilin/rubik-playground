@@ -176,7 +176,7 @@ func runCmd() *cobra.Command {
 	f.BoolVar(&req.NoUndo, "no-undo", true, "do not offer the inverse of the previous move")
 	f.BoolVar(&req.Shuffle, "shuffle", false, "randomise the order of offered moves")
 	f.BoolVar(&req.Lookahead, "lookahead", true, "describe each move by the sticker count it leads to")
-	f.StringVar(&req.Observation, "observation", obsText, "how the faces are shown to the player: text or image (image: not for jev)")
+	f.StringVar(&req.Observation, "observation", obsText, "how the faces are shown to the player: text, pieces or image (image: not for jev)")
 	return cmd
 }
 
@@ -249,11 +249,19 @@ func servedCube(addr string) (*Cube, []string, error) {
 // playCmds are for a player other than Jev: read the served cube, think, move.
 func playCmds() []*cobra.Command {
 	var addr, by, imagePath string
+	var pieces bool
 	// observe prints the observation; with --image the faces go to a PNG instead of the text rows.
 	observe := func() error {
 		cube, history, err := servedCube(addr)
 		if err != nil {
 			return err
+		}
+		if pieces && imagePath != "" {
+			return fmt.Errorf("--pieces and --image are different observations: pick one")
+		}
+		if pieces {
+			fmt.Println(cube.StateText(history, defaultLimit, obsPieces))
+			return nil
 		}
 		if imagePath == "" {
 			fmt.Println(cube.StateText(history, defaultLimit, obsText))
@@ -269,7 +277,7 @@ func playCmds() []*cobra.Command {
 		Use:   "state",
 		Short: "Print the served cube: the same observation every player gets",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error { return observe() },
+		RunE:  func(cmd *cobra.Command, args []string) error { return observe() },
 	}
 	move := &cobra.Command{
 		Use:   "move <moves...>",
@@ -301,6 +309,8 @@ func playCmds() []*cobra.Command {
 			in := PlayRequest{Player: player, Observation: obsText}
 			if imagePath != "" {
 				in.Observation = obsImage
+			} else if pieces {
+				in.Observation = obsPieces
 			}
 			if err := call(addr, "/api/play", in, &Game{}); err != nil {
 				return err
@@ -313,6 +323,7 @@ func playCmds() []*cobra.Command {
 	play.MarkFlagRequired("as")
 	for _, c := range []*cobra.Command{state, move, play} {
 		c.Flags().StringVar(&addr, "ui", "localhost:7810", "address of the running serve")
+		c.Flags().BoolVar(&pieces, "pieces", false, "list corners and edges by place instead of the face rows")
 		c.Flags().StringVar(&imagePath, "image", "", "write the faces as a PNG to this file instead of printing them as text")
 	}
 	move.Flags().StringVar(&by, "as", "cli", "player name shown in the page log")

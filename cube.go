@@ -213,11 +213,82 @@ func (c *Cube) Progress() Progress {
 	return p
 }
 
-// Observation modes: the faces as text rows, or as the picture of StateImage.
+// Observation modes: the faces as text rows, as a list of pieces by slot, or as
+// the picture of StateImage.
 const (
-	obsText  = "text"
-	obsImage = "image"
+	obsText   = "text"
+	obsPieces = "pieces"
+	obsImage  = "image"
 )
+
+func validObservation(o string) error {
+	switch o {
+	case "", obsText, obsPieces, obsImage:
+		return nil
+	}
+	return fmt.Errorf("unknown observation %q: use %s, %s or %s", o, obsText, obsPieces, obsImage)
+}
+
+// slotName names a corner or edge place by its faces, U/D first, then F/B, then R/L.
+func slotName(p vec) string {
+	var b strings.Builder
+	for _, axis := range [3]int{1, 2, 0} {
+		for k, n := range normals {
+			if p[axis] != 0 && n[axis] == p[axis] {
+				b.WriteString(faces[k])
+			}
+		}
+	}
+	return b.String()
+}
+
+var slotOrder = strings.Fields("UFR UFL UBL UBR DFR DFL DBL DBR UF UR UB UL FR FL BL BR DF DR DB DL")
+
+// piecesText lists every corner and edge slot with the sticker shown on each of
+// its faces and the slot the piece belongs to.
+func (c *Cube) piecesText() string {
+	lines := map[string]string{}
+	for _, cb := range c.cubies {
+		slot := slotName(cb.p)
+		if len(slot) < 2 {
+			continue
+		}
+		var parts []string
+		for _, f := range slot {
+			for k, n := range normals {
+				if faces[k] != string(f) {
+					continue
+				}
+				for i, local := range normals {
+					if dot(cb.home, local) == 1 && cb.m.apply(local) == n {
+						parts = append(parts, fmt.Sprintf("%c=%s", f, letters[i]))
+					}
+				}
+			}
+		}
+		where := "belongs at " + slotName(cb.home)
+		if cb.p == cb.home {
+			where = "in its place, twisted"
+			if len(slot) == 2 {
+				where = "in its place, flipped"
+			}
+			if cb.m == (mat{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}) {
+				where = "solved"
+			}
+		}
+		lines[slot] = fmt.Sprintf("%s: %s (%s)\n", slot, strings.Join(parts, " "), where)
+	}
+	var b strings.Builder
+	for i, slot := range slotOrder {
+		if i == 0 {
+			b.WriteString("Corners:\n")
+		} else if i == 8 {
+			b.WriteString("Edges:\n")
+		}
+		b.WriteString(lines[slot])
+	}
+	return b.String()
+}
 
 // StateText is the observation every player gets. With obsImage the face rows
 // are left out: the faces travel as StateImage next to this text.
@@ -226,6 +297,10 @@ func (c *Cube) StateText(history []string, limit int, mode string) string {
 	if mode == obsImage {
 		b.WriteString("3x3 Rubik's cube. Colours: white, yellow, red, orange, green, blue.\n")
 		b.WriteString(imageLegend)
+	} else if mode == obsPieces {
+		b.WriteString("3x3 Rubik's cube. Colours: W white, Y yellow, R red, O orange, G green, B blue. Centres never move: U is W, D is Y, F is G, B is B, R is R, L is O.\n")
+		b.WriteString("Every corner and edge place is named by the faces it touches (UFR is the corner of Up, Front and Right; UF is the edge of Up and Front). X=c means the sticker of that piece on face X has colour c. In brackets: the place the piece belongs to.\n")
+		b.WriteString(c.piecesText())
 	} else {
 		b.WriteString("3x3 Rubik's cube. Colours: W white, Y yellow, R red, O orange, G green, B blue.\n")
 		b.WriteString("Each face is 3 rows, top to bottom, read from outside the cube (U with Back at the top, D with Front at the top, side faces with U at the top).\n")
