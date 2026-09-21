@@ -167,6 +167,52 @@ func (c *Cube) Matched() int {
 
 func (c *Cube) Solved() bool { return c.Matched() == 54 }
 
+// Progress counts pieces per layer-by-layer stage (D first, U last). A piece is
+// solved when it is in its home place with its home orientation; centres never move.
+type Progress struct {
+	DEdges, DCorners, MiddleEdges   int // solved
+	UEdgesWhiteUp, UEdgesSolved     int
+	UCornersInPlace, UCornersSolved int
+}
+
+func (c *Cube) Progress() Progress {
+	var p Progress
+	id := mat{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}
+	up := vec{0, 1, 0}
+	for _, cb := range c.cubies {
+		h := cb.home
+		nonzero := h[0]*h[0] + h[1]*h[1] + h[2]*h[2] // 2 = edge, 3 = corner
+		if nonzero < 2 {
+			continue
+		}
+		edge, inPlace := nonzero == 2, cb.p == h
+		solved := inPlace && cb.m == id
+		switch {
+		case h[1] == -1 && edge && solved:
+			p.DEdges++
+		case h[1] == -1 && !edge && solved:
+			p.DCorners++
+		case h[1] == 0 && solved:
+			p.MiddleEdges++
+		case h[1] == 1 && edge:
+			if cb.m.apply(up) == up {
+				p.UEdgesWhiteUp++
+			}
+			if solved {
+				p.UEdgesSolved++
+			}
+		case h[1] == 1 && !edge:
+			if inPlace {
+				p.UCornersInPlace++
+			}
+			if solved {
+				p.UCornersSolved++
+			}
+		}
+	}
+	return p
+}
+
 // StateText is the cube description sent to Jev as `state`.
 func (c *Cube) StateText(history []string) string {
 	g := c.Facelets()
@@ -181,7 +227,13 @@ func (c *Cube) StateText(history []string) string {
 		}
 		fmt.Fprintf(&b, "%s (%s, centre %s): %s\n", f, faceName[f[0]], grid[1][1], strings.Join(rows, " / "))
 	}
-	fmt.Fprintf(&b, "Stickers matching their face centre: %d/54", c.Matched())
+	fmt.Fprintf(&b, "Stickers matching their face centre: %d/54\n", c.Matched())
+	p := c.Progress()
+	b.WriteString("Progress by layer (a piece is solved when it is in its own place with its own orientation):\n")
+	fmt.Fprintf(&b, "D layer (yellow): edges solved %d/4, corners solved %d/4\n", p.DEdges, p.DCorners)
+	fmt.Fprintf(&b, "Middle layer: edges solved %d/4\n", p.MiddleEdges)
+	fmt.Fprintf(&b, "U layer (white): edges white-up %d/4, edges solved %d/4, corners in place %d/4, corners solved %d/4",
+		p.UEdgesWhiteUp, p.UEdgesSolved, p.UCornersInPlace, p.UCornersSolved)
 	if len(history) > 0 {
 		last := history[len(history)-1]
 		fmt.Fprintf(&b, "\nMoves made so far (%d): %s\n", len(history), strings.Join(history, " "))

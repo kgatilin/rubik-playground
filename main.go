@@ -154,7 +154,6 @@ func runCmd() *cobra.Command {
 	f.BoolVar(&req.Sample, "sample", false, "draw the move from the probabilities")
 	f.BoolVar(&req.NoUndo, "no-undo", true, "do not offer the inverse of the previous move")
 	f.BoolVar(&req.Shuffle, "shuffle", false, "randomise the order of offered moves")
-	f.BoolVar(&req.HideHistory, "hide-history", false, "leave the move history out of the state text")
 	f.BoolVar(&req.Lookahead, "lookahead", true, "describe each move by the sticker count it leads to")
 	return cmd
 }
@@ -304,8 +303,8 @@ func showCmd() *cobra.Command {
 					return err
 				}
 				if first {
-					fmt.Printf("run %s  scramble: %s  sample=%v no_undo=%v shuffle=%v hide_history=%v lookahead=%v\ninstructions: %s\n",
-						r.Request.Run, strings.Join(r.Request.Scramble, " "), r.Request.Sample, r.Request.NoUndo, r.Request.Shuffle, r.Request.HideHistory, r.Request.Lookahead, r.Request.Instructions)
+					fmt.Printf("run %s  scramble: %s  sample=%v no_undo=%v shuffle=%v lookahead=%v\ninstructions: %s\n",
+						r.Request.Run, strings.Join(r.Request.Scramble, " "), r.Request.Sample, r.Request.NoUndo, r.Request.Shuffle, r.Request.Lookahead, r.Request.Instructions)
 				}
 				printStep(&r)
 				if state {

@@ -35,7 +35,6 @@ type StepRequest struct {
 	Sample       bool     `json:"sample"`       // draw the move from the probabilities instead of taking the top one
 	NoUndo       bool     `json:"no_undo"`      // do not offer the inverse of the previous move
 	Shuffle      bool     `json:"shuffle"`      // randomise the order in which moves are listed
-	HideHistory  bool     `json:"hide_history"` // leave the move history out of the state text
 	Lookahead    bool     `json:"lookahead"`    // describe each move by the sticker count it leads to
 }
 
@@ -114,12 +113,8 @@ func (j *Jev) Decide(req StepRequest) (*StepRecord, error) {
 		rand.Shuffle(len(offered), func(a, b int) { offered[a], offered[b] = offered[b], offered[a] })
 	}
 
-	shown := req.History
-	if req.HideHistory {
-		shown = nil
-	}
 	rec := &StepRecord{Time: time.Now().UTC(), Step: len(req.History) + 1, Request: req, Offered: offered,
-		State: cube.StateText(shown), MatchedBefore: cube.Matched()}
+		State: cube.StateText(req.History), MatchedBefore: cube.Matched()}
 
 	criteria := make(orderedCriteria, len(offered))
 	for i, m := range offered {

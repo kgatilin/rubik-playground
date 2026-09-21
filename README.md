@@ -21,5 +21,5 @@ builds the prompt, calls `https://api.typesafe.ai/v1/systemone` and appends one 
 step to `runs/<run>.jsonl` (state text, offered order, probabilities, sticker counts, latency).
 The token stays server-side.
 
-Prompt knobs (page checkboxes and `run` flags): `--shuffle` option order, `--hide-history`,
+Prompt knobs (page checkboxes and `run` flags): `--shuffle` option order,
 `--no-undo`, `--sample`, `--lookahead` (each move's criteria lists the sticker count it leads to).

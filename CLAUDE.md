@@ -25,8 +25,12 @@ A player is anything that turns an observation into an action. There are two way
 to be one, and both use the same observation, the same action catalog, the same
 turn accounting and the same log:
 
-- **built-in**: the server calls the model once per decision (`/api/step`, `run`).
-  Jev today; Gemini on Vertex AI with a structured response **(proposed)**.
+- **built-in**: the server drives the model (`/api/step`, `run`).
+  - Jev: one stateless call per decision, the action catalog as `choice` criteria.
+  - Gemini on Vertex AI **(proposed)**: one conversation per game with a single tool,
+    `move(actions)`. The tool response is the next observation. The server keeps the
+    whole conversation and sends the model's parts back untouched, so thought
+    signatures survive and the model carries its own plan between turns.
 - **external**: an agent in a terminal calls `state` and `move` against the served cube.
 
 ### Rules for external (CLI) players
@@ -46,9 +50,16 @@ players receive it verbatim:
 
 - the six faces as 3 rows each, with the reading orientation stated once;
 - stickers matching their face centre, n/54;
-- face turns used and left **(proposed)**;
-- the player's own actions in this game (`--hide-history` removes them: Jev copies the
-  last move from the history, see Findings).
+- progress by layer, counted in pieces (`Cube.Progress`): D edges and corners solved,
+  middle edges solved, U edges white-up / solved, U corners in place / solved. A piece is
+  solved when it is in its own place with its own orientation. This fixes D as the first
+  layer and U as the last for every player, the same choice the bundles make;
+- the player's own actions in this game, and the previous move with its inverse;
+- face turns used and left **(proposed)**.
+
+The observation has no per-player switches. `--no-undo` (the inverse of the previous
+move is not offered) and `--shuffle` (option order) act on the action list of built-in
+players only.
 
 `lookahead` (each action's criteria lists the sticker count it leads to) is a game
 setting, recorded in the log. It is search done by the harness, so games played with it
@@ -80,10 +91,9 @@ for Gemini, `actions` output for CLI agents.
 
 Stated so results are read correctly; none of it is compensated unless listed.
 
-- **Memory.** A CLI agent keeps a plan across turns in its conversation. Jev is
-  stateless and returns no text, so it has no equivalent. Gemini gets a `plan` string in
-  its structured response that is fed back on the next decision **(proposed)**; without
-  it Gemini is as memoryless as Jev.
+- **Memory.** A CLI agent and Gemini (tool-calling conversation) keep a plan across
+  turns. Jev is stateless and returns no text, so it has no equivalent; what it knows
+  about the past is the action history in the observation.
 - **Decisions per look.** A built-in player acts once per observation. A CLI agent may
   send a long action list after one look. The score counts face turns, so this changes
   the number of calls and nothing else.
@@ -98,7 +108,8 @@ Stated so results are read correctly; none of it is compensated unless listed.
   0.10–0.20, confidence < 0.2) with a small prior for `U`; argmax then repeats `U`.
   The prior survives reordering faces, removing `U` from the legend and word option keys.
 - With the move history in the state Jev copies the previous move (probability of the
-  repeated move grew 0.12 → 0.30 over three steps).
+  repeated move grew 0.12 → 0.30 over three steps). Layer progress in the observation
+  does not change this: `R U F'`, no lookahead, six decisions, `U` every time.
 - With `lookahead` Jev is a confident argmax (0.9+) and plays greedy on the sticker
   count: solves 2-move scrambles, stalls near 38/54 on longer ones.
 - A CLI agent (Claude) solved a 20-move scramble in 99 face turns layer by layer; the
@@ -116,7 +127,8 @@ Stated so results are read correctly; none of it is compensated unless listed.
 Build and check: `go vet ./... && go test ./... && go build -o jev-playground .`
 After changing `index.html` or Go code, restart `serve` (the page is embedded).
 Secrets: `JEV_API_TOKEN` from env or `.env` (gitignored). Vertex AI uses application
-default credentials; no key files in the repo.
+default credentials (`gcloud auth application-default login`), project and location from
+env; no key files in the repo.
 
 Not recorded today: moves made through `move` or the page are in the event stream and
 the page log, not in `runs/*.jsonl` (only Jev decisions are). A game log that covers

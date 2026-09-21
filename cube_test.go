@@ -41,3 +41,19 @@ func TestSequencesReturnToSolved(t *testing.T) {
 		t.Error("sequence followed by its inverse should be identity")
 	}
 }
+
+func TestProgress(t *testing.T) {
+	c := NewCube()
+	if got, want := c.Progress(), (Progress{4, 4, 4, 4, 4, 4, 4}); got != want {
+		t.Errorf("solved cube: %+v", got)
+	}
+	c.Apply("U") // U pieces keep white up and leave their places; lower layers untouched
+	if got, want := c.Progress(), (Progress{4, 4, 4, 4, 0, 0, 0}); got != want {
+		t.Errorf("after U: %+v", got)
+	}
+	c = NewCube()
+	c.Apply("F") // takes one edge and two corners out of D and U, two middle edges
+	if got, want := c.Progress(), (Progress{3, 2, 2, 3, 3, 2, 2}); got != want {
+		t.Errorf("after F: %+v", got)
+	}
+}

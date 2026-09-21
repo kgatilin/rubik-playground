@@ -65,7 +65,6 @@
       <label><input id="sample" type="checkbox"> sample from probabilities</label>
       <label><input id="noUndo" type="checkbox" checked> hide the undo move</label>
       <label><input id="shuffle" type="checkbox" checked> shuffle option order</label>
-      <label><input id="hideHistory" type="checkbox" checked> no move history in state</label>
       <label><input id="lookahead" type="checkbox" checked> lookahead: each move lists the sticker count it leads to</label>
     </div>
     <div class="row" style="margin-top:10px">
@@ -295,7 +294,7 @@ $('scramble').onclick = () => send('/api/scramble', { len: +$('scrambleN').value
 // ---------- Jev ----------
 const stepRequest = () => ({ options: $('moves').value.trim().split(/[\s,]+/).filter(Boolean),
   instructions: $('instr').value, sample: $('sample').checked, no_undo: $('noUndo').checked,
-  shuffle: $('shuffle').checked, hide_history: $('hideHistory').checked, lookahead: $('lookahead').checked });
+  shuffle: $('shuffle').checked, lookahead: $('lookahead').checked });
 
 let running = false;
 async function run(limit) {
