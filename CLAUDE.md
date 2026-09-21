@@ -76,7 +76,8 @@ turn accounting and the same log:
   `jev-playground move <actions> --game <n>`, with the game number `play` printed; each takes `--pieces` or `--image <file>`.
   `jev-playground actions` **(proposed)**. Nothing else touches the cube.
 - A leaderboard attempt starts with `play` and is played in one observation mode, the one
-  given to `play`. Calling `play` again drops the attempt as `abandoned`.
+  given to `play`. Calling `play` again starts another game with its own number; the first
+  one stays open.
 - No scripts, loops, solvers or simulation of the cube in code. The cube is simulated
   only in the player's head. `state` takes no cube arguments for this reason; `--image` only
   names the file the picture is written to.
