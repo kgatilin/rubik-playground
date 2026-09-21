@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -69,5 +70,23 @@ func TestPiecesText(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
+	}
+}
+
+func TestNetAndJSONViews(t *testing.T) {
+	c := NewCube()
+	c.Apply("F")
+	net := "        W W W\n        W W W\n        O O O\n" +
+		"O O Y   G G G   W R R   B B B\nO O Y   G G G   W R R   B B B\nO O Y   G G G   W R R   B B B\n" +
+		"        R R R\n        Y Y Y\n        Y Y Y\n"
+	if got := c.netText(); got != net {
+		t.Errorf("net:\n%s", got)
+	}
+	var faces map[string][3][3]string
+	if err := json.Unmarshal([]byte(c.jsonText()), &faces); err != nil {
+		t.Fatal(err)
+	}
+	if faces["up"][2] != [3]string{"orange", "orange", "orange"} || faces["right"][0] != [3]string{"white", "red", "red"} || len(faces) != 6 {
+		t.Errorf("json: %v", faces)
 	}
 }

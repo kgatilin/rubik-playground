@@ -24,6 +24,7 @@ const defaultLimit = 100 // face turns per game
 type Session struct {
 	id       string // "" is the sandbox cube; a game session has a short number
 	name     string // the player the session was registered for
+	view     string // observation mode of the registration
 	mu       sync.Mutex
 	stepMu   sync.Mutex // one built-in decision at a time; s.mu is not held while a model thinks
 	jev      *Jev
@@ -46,6 +47,7 @@ type event struct {
 	History  []string    `json:"history"`
 	Record   *StepRecord `json:"record,omitempty"`
 	Game     *Game       `json:"game,omitempty"` // game: opened (no outcome) or closed
+	View     string      `json:"view,omitempty"` // /api/state only: the observation mode the session's game was registered with
 	Log      []event     `json:"log,omitempty"`  // sync only: the game so far, for the page log
 }
 
@@ -103,7 +105,7 @@ func (h *Hub) Play(in PlayRequest) (*Game, error) {
 	}
 	h.mu.Lock()
 	s := newSession(h.jev)
-	s.id, s.name = strconv.Itoa(len(h.order)), in.Player
+	s.id, s.name, s.view = strconv.Itoa(len(h.order)), in.Player, in.Observation
 	h.sessions[s.id] = s
 	h.order = append(h.order, s.id)
 	h.mu.Unlock()
@@ -358,7 +360,7 @@ func (h *Hub) routes(mux *http.ServeMux) {
 		if s := session(w, r); s != nil {
 			s.mu.Lock()
 			defer s.mu.Unlock()
-			writeJSON(w, event{Type: "sync", Scramble: s.scramble, History: s.history})
+			writeJSON(w, event{Type: "sync", Scramble: s.scramble, History: s.history, View: s.view})
 		}
 	})
 	mux.HandleFunc("/api/players", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, players()) })

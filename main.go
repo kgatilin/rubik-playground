@@ -178,7 +178,7 @@ func runCmd() *cobra.Command {
 	f.BoolVar(&req.NoUndo, "no-undo", true, "do not offer the inverse of the previous move")
 	f.BoolVar(&req.Shuffle, "shuffle", false, "randomise the order of offered moves")
 	f.BoolVar(&req.Lookahead, "lookahead", true, "describe each move by the sticker count it leads to")
-	f.StringVar(&req.Observation, "observation", obsText, "how the faces are shown to the player: text, pieces or image (image: not for jev)")
+	f.StringVar(&req.Observation, "observation", obsText, "how the faces are shown to the player: "+strings.Join(observations, ", ")+" (image: not for jev)")
 	return cmd
 }
 
@@ -247,58 +247,56 @@ func gameQuery(game string) string {
 const playPrompt = `You are playing game %[1]s as %[2]s. Goal: solve the cube in as few face turns as possible; the game ends unsolved at %[3]d face turns.
 
 Commands, the only things that touch the cube:
-  jev-playground state --game %[1]s%[4]s            look at the cube, free, any number of times
-  jev-playground move <actions> --game %[1]s%[4]s   turn faces, e.g. move R U R' --game %[1]s; any number of actions per call, each costs one face turn
+  jev-playground state --game %[1]s            look at the cube, free, any number of times
+  jev-playground move <actions> --game %[1]s   turn faces, e.g. move R U R' --game %[1]s; any number of actions per call, each costs one face turn
 Actions: U D L R F B turn that face 90° clockwise as seen from outside the face, X' is counter-clockwise, X2 is 180°. There are no whole-cube rotations: centres never move.
 No scripts, loops, solvers or simulation of the cube in code: the cube is simulated only in your head. Reading the scramble, the server's API or its logs forfeits the game.
 
 `
 
 // servedCube fetches a session of a running `serve` and rebuilds its cube.
-func servedCube(addr, game string) (*Cube, []string, error) {
+func servedCube(addr, game string) (*Cube, []string, string, error) {
 	resp, err := http.Get("http://" + addr + "/api/state" + gameQuery(game))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(resp.Body)
-		return nil, nil, errors.New(strings.TrimSpace(string(msg)))
+		return nil, nil, "", errors.New(strings.TrimSpace(string(msg)))
 	}
 	var st event
 	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	cube := NewCube()
 	cube.ApplyAll(st.Scramble)
-	return cube, st.History, cube.ApplyAll(st.History)
+	return cube, st.History, st.View, cube.ApplyAll(st.History)
 }
 
 // playCmds are for a player other than Jev: read the served cube, think, move.
 func playCmds() []*cobra.Command {
-	var addr, player, game, imagePath string
-	var pieces bool
-	// observe prints the observation; with --image the faces go to a PNG instead of the text rows.
+	var addr, player, game, view, imagePath string
+	// observe prints the observation in the game's own mode (--view overrides it, and
+	// picks the mode on the sandbox). With image the faces go to a PNG next to the text.
 	observe := func() error {
-		cube, history, err := servedCube(addr, game)
+		cube, history, registered, err := servedCube(addr, game)
 		if err != nil {
 			return err
 		}
-		if pieces && imagePath != "" {
-			return fmt.Errorf("--pieces and --image are different observations: pick one")
-		}
-		if pieces {
-			fmt.Println(cube.StateText(history, defaultLimit, obsPieces))
-			return nil
-		}
-		if imagePath == "" {
-			fmt.Println(cube.StateText(history, defaultLimit, obsText))
-			return nil
-		}
-		if err := os.WriteFile(imagePath, cube.StateImage(), 0o644); err != nil {
+		mode := cmp.Or(view, registered, obsText)
+		if err := validObservation(mode); err != nil {
 			return err
 		}
-		fmt.Printf("%s\nImage: %s\n", cube.StateText(history, defaultLimit, obsImage), imagePath)
+		fmt.Println(cube.StateText(history, defaultLimit, mode))
+		if mode != obsImage {
+			return nil
+		}
+		path := cmp.Or(imagePath, filepath.Join(os.TempDir(), "cube-game-"+cmp.Or(game, "sandbox")+".png"))
+		if err := os.WriteFile(path, cube.StateImage(), 0o644); err != nil {
+			return err
+		}
+		fmt.Printf("Image: %s\n", path)
 		return nil
 	}
 	state := &cobra.Command{
@@ -324,24 +322,13 @@ func playCmds() []*cobra.Command {
 		Short: "Register for a leaderboard game: fresh 20-move scramble, the result is recorded under the name",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			in := PlayRequest{Player: player, Observation: obsText}
-			if imagePath != "" {
-				in.Observation = obsImage
-			} else if pieces {
-				in.Observation = obsPieces
-			}
+			in := PlayRequest{Player: player, Observation: cmp.Or(view, obsText)}
 			var g Game
 			if err := call(addr, "/api/play", in, &g); err != nil {
 				return err
 			}
 			game = g.Session
-			view := ""
-			if pieces {
-				view = " --pieces"
-			} else if imagePath != "" {
-				view = " --image " + imagePath
-			}
-			fmt.Printf(playPrompt, g.Session, g.Player, defaultLimit, view)
+			fmt.Printf(playPrompt, g.Session, g.Player, defaultLimit)
 			return observe()
 		},
 	}
@@ -351,8 +338,8 @@ func playCmds() []*cobra.Command {
 	}
 	for _, c := range []*cobra.Command{state, move, play} {
 		c.Flags().StringVar(&addr, "ui", "localhost:7810", "address of the running serve")
-		c.Flags().BoolVar(&pieces, "pieces", false, "list corners and edges by place instead of the face rows")
-		c.Flags().StringVar(&imagePath, "image", "", "write the faces as a PNG to this file instead of printing them as text")
+		c.Flags().StringVar(&view, "view", "", "how the faces are shown: "+strings.Join(observations, ", ")+" (play: the game's mode, default text; state and move: default the game's mode)")
+		c.Flags().StringVar(&imagePath, "image", "", "with the image view: where the PNG is written (default: a file in the temp dir)")
 	}
 	play.MarkFlagRequired("as")
 	board := &cobra.Command{

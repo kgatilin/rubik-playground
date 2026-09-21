@@ -73,7 +73,9 @@ turn accounting and the same log:
 
 - Allowed commands: `jev-playground play --as <name>` (register: fresh scramble, the
   result goes to the leaderboard under that name), `jev-playground state --game <n>`,
-  `jev-playground move <actions> --game <n>`, with the game number `play` printed; each takes `--pieces` or `--image <file>`.
+  `jev-playground move <actions> --game <n>`, with the game number `play` printed.
+  `play --view <mode>` picks the observation of the game; `state` and `move` then print
+  that mode by themselves (`--view` on them overrides it, and picks the mode on the sandbox).
   `jev-playground actions` **(proposed)**. Nothing else touches the cube.
 - A leaderboard attempt starts with `play` and is played in one observation mode, the one
   given to `play`. Calling `play` again starts another game with its own number; the first
@@ -103,17 +105,22 @@ The observation has no per-player switches. `--no-undo` (the inverse of the prev
 move is not offered) and `--shuffle` (option order) act on the action list of built-in
 players only.
 
-`observation` is a game setting, recorded in the log: `text` (default), `pieces` or
-`image`. With `pieces` the six face rows are replaced by the 8 corner and 12 edge places
+`observation` is a game setting, recorded in the log: `text` (default), `net`, `json`,
+`pieces` or `image`. `net` and `json` carry the same facelets as `text` in another shape.
+`net` (`Cube.netText`) is the unfolded cross of letters separated by spaces, U on top, L F R B
+in a row, D below, so which row touches which is visible instead of described. `json`
+(`Cube.jsonText`) is one 3x3 array per face with colour words (`"white"`), which tests
+whether glued letters like `WWO` are what a model misreads. With `pieces` the six face rows are replaced by the 8 corner and 12 edge places
 (`Cube.piecesText`), one line each: the sticker on every face of the place and the place
 the piece belongs to, e.g. `UFR: U=G F=Y R=R (belongs at DFR)`; a piece at home reads
 `solved`, `flipped` or `twisted`. This hands the player piece identity, which `text` and
-`image` leave to be derived. CLI agents get it with `--pieces`. With
+the facelet modes leave to be derived. With
 `image` the six face rows are replaced by one PNG (`Cube.StateImage`, `image.go`): the
 unfolded net (U / L F R B / D) and two corner views (from U-F-R, from D-B-L), face letters
 on the centre stickers. Everything else (sticker count, layer progress, turns, history)
 stays text. Gemini gets the picture as an inline part of the first message and inside each
-tool response; a CLI agent gets it with `--image <file>`; Jev takes text only and refuses
+tool response; a CLI agent gets the PNG as a file (`--image <file>`, default a file in the
+temp dir); Jev takes text only and refuses
 the mode. The page picks it with the "faces" selector next to the player, and a decision
 card shows the picture the player saw. Each observation mode is its own leaderboard category.
 

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -213,20 +214,63 @@ func (c *Cube) Progress() Progress {
 	return p
 }
 
-// Observation modes: the faces as text rows, as a list of pieces by slot, or as
-// the picture of StateImage.
+// Observation modes: the faces as text rows, as an unfolded net of letters, as
+// JSON with colour words, as a list of pieces by slot, or as the picture of StateImage.
 const (
 	obsText   = "text"
+	obsNet    = "net"
+	obsJSON   = "json"
 	obsPieces = "pieces"
 	obsImage  = "image"
 )
 
+var observations = []string{obsText, obsNet, obsJSON, obsPieces, obsImage}
+
 func validObservation(o string) error {
-	switch o {
-	case "", obsText, obsPieces, obsImage:
+	if o == "" || slices.Contains(observations, o) {
 		return nil
 	}
-	return fmt.Errorf("unknown observation %q: use %s, %s or %s", o, obsText, obsPieces, obsImage)
+	return fmt.Errorf("unknown observation %q: use one of %s", o, strings.Join(observations, ", "))
+}
+
+// netText draws the faces as a cross of letters: U on top, L F R B in a row, D below.
+func (c *Cube) netText() string {
+	g := c.Facelets()
+	row := func(f string, r int) string { cells := g[f][r]; return strings.Join(cells[:], " ") }
+	var b strings.Builder
+	for _, f := range [2]string{"U", "D"} {
+		if f == "D" {
+			for r := range 3 {
+				fmt.Fprintf(&b, "%s   %s   %s   %s\n", row("L", r), row("F", r), row("R", r), row("B", r))
+			}
+		}
+		for r := range 3 {
+			fmt.Fprintf(&b, "        %s\n", row(f, r))
+		}
+	}
+	return b.String()
+}
+
+var colourWord = map[string]string{"W": "white", "Y": "yellow", "R": "red", "O": "orange", "G": "green", "B": "blue"}
+
+// jsonText gives every face as a 3x3 array of colour words.
+func (c *Cube) jsonText() string {
+	g := c.Facelets()
+	var b strings.Builder
+	b.WriteString("{\n")
+	for i, f := range faces {
+		var rows []string
+		for _, r := range g[f] {
+			rows = append(rows, fmt.Sprintf(`["%s", "%s", "%s"]`, colourWord[r[0]], colourWord[r[1]], colourWord[r[2]]))
+		}
+		comma := ","
+		if i == len(faces)-1 {
+			comma = ""
+		}
+		fmt.Fprintf(&b, "  %-8s [%s]%s\n", `"`+strings.ToLower(faceName[f[0]])+`":`, strings.Join(rows, ", "), comma)
+	}
+	b.WriteString("}\n")
+	return b.String()
 }
 
 // slotName names a corner or edge place by its faces, U/D first, then F/B, then R/L.
@@ -297,6 +341,13 @@ func (c *Cube) StateText(history []string, limit int, mode string) string {
 	if mode == obsImage {
 		b.WriteString("3x3 Rubik's cube. Colours: white, yellow, red, orange, green, blue.\n")
 		b.WriteString(imageLegend)
+	} else if mode == obsNet {
+		b.WriteString("3x3 Rubik's cube. Colours: W white, Y yellow, R red, O orange, G green, B blue.\n")
+		b.WriteString("Unfolded net: U on top, then L F R B in one row, D at the bottom. Every face is drawn as seen from outside the cube, and the centre of each 3x3 block is the face's centre: U is W, L is O, F is G, R is R, B is B, D is Y. Faces that touch in the net touch on the cube along that edge; the top rows of L, R and B run along the left, right and back edges of U, and their bottom rows along the left, right and back edges of D.\n")
+		b.WriteString(c.netText())
+	} else if mode == obsJSON {
+		b.WriteString("3x3 Rubik's cube as JSON: each face is 3 rows, top to bottom, each row left to right, read from outside the cube (up with Back at the top, down with Front at the top, side faces with up at the top). The middle entry of a face is its centre and never moves.\n")
+		b.WriteString(c.jsonText())
 	} else if mode == obsPieces {
 		b.WriteString("3x3 Rubik's cube. Colours: W white, Y yellow, R red, O orange, G green, B blue. Centres never move: U is W, D is Y, F is G, B is B, R is R, L is O.\n")
 		b.WriteString("Every corner and edge place is named by the faces it touches (UFR is the corner of Up, Front and Right; UF is the edge of Up and Front). X=c means the sticker of that piece on face X has colour c. In brackets: the place the piece belongs to.\n")
