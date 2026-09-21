@@ -10,8 +10,9 @@ implemented yet. Everything else matches the code.
 
 - One cube per `serve` process: solved + scramble + the moves made since.
 - Goal: solve it in the fewest face turns. Limit: 100 face turns per game
-  **(proposed; today `run --max` counts decisions and defaults to 10)**. Reaching the
-  limit unsolved is a DNF.
+  (`defaultLimit`); the server refuses moves past it and a decision's move list is cut
+  at it. Reaching the limit unsolved is a DNF. `run --max` and the page's "decisions
+  max" only cap the number of built-in decisions.
 - Score = face turns in the half-turn metric: each of the 18 single moves costs 1.
   A bundle costs the number of single moves it expands to. Decisions and latency are
   logged as secondary numbers and do not affect the score.
@@ -27,10 +28,14 @@ turn accounting and the same log:
 
 - **built-in**: the server drives the model (`/api/step`, `run`).
   - Jev: one stateless call per decision, the action catalog as `choice` criteria.
-  - Gemini on Vertex AI **(proposed)**: one conversation per game with a single tool,
-    `move(actions)`. The tool response is the next observation. The server keeps the
-    whole conversation and sends the model's parts back untouched, so thought
-    signatures survive and the model carries its own plan between turns.
+  - Gemini on Vertex AI (`gemini.go`, player id `gemini:<model>`): one conversation per
+    game with a single tool, `move(actions)`. The tool response is the next observation,
+    rendered when the next decision starts, so moves made by others in between are seen.
+    The model's turns go back into the conversation untouched, so thought signatures
+    survive and the model carries its own plan between decisions. Thought summaries are
+    logged (`thoughts`). Scramble and reset start a new conversation.
+  - The page's player selector and `run --player` pick one; the list comes from
+    `GEMINI_MODELS` (comma-separated, default in `players()`).
 - **external**: an agent in a terminal calls `state` and `move` against the served cube.
 
 ### Rules for external (CLI) players
@@ -55,7 +60,7 @@ players receive it verbatim:
   solved when it is in its own place with its own orientation. This fixes D as the first
   layer and U as the last for every player, the same choice the bundles make;
 - the player's own actions in this game, and the previous move with its inverse;
-- face turns used and left **(proposed)**.
+- face turns used, of the limit.
 
 The observation has no per-player switches. `--no-undo` (the inverse of the previous
 move is not offered) and `--shuffle` (option order) act on the action list of built-in
@@ -104,6 +109,10 @@ Stated so results are read correctly; none of it is compensated unless listed.
 
 ## Findings so far
 
+- Gemini (`gemini-3.8-flash`) solved 2-move scrambles in 2–3 face turns, 8–40 s per
+  decision; it reasons the scramble back from the facelets. Longer scrambles not run yet.
+- `gemini-2.5-flash` returns an empty STOP response when a tool call is forced
+  (`FunctionCallingConfigModeAny`), so it cannot play.
 - Without `lookahead` Jev's distribution over the 18 moves is near flat (top option
   0.10–0.20, confidence < 0.2) with a small prior for `U`; argmax then repeats `U`.
   The prior survives reordering faces, removing `U` from the legend and word option keys.
@@ -118,7 +127,9 @@ Stated so results are read correctly; none of it is compensated unless listed.
 ## Architecture
 
 - `cube.go` — cube model, facelets, `StateText`. `cube_test.go` pins move notation.
-- `jev.go` — `Jev.Decide`: prompt, API call, one JSON line per step in `runs/<run>.jsonl`.
+- `jev.go` — `Decider` interface, shared `prepareStep`/`finishStep`, `Jev.Decide`, one
+  JSON line per decision in `runs/<run>.jsonl`.
+- `gemini.go` — `Gemini.Decide`: the tool-calling conversation.
 - `server.go` — `Session` (the served cube), SSE event stream `/api/events`, commands
   `/api/reset`, `/api/scramble`, `/api/move`, `/api/step`. The page only renders events.
 - `main.go` — cobra commands: `serve`, `run [--ui]`, `show`, `state`, `move`.
@@ -126,9 +137,10 @@ Stated so results are read correctly; none of it is compensated unless listed.
 
 Build and check: `go vet ./... && go test ./... && go build -o jev-playground .`
 After changing `index.html` or Go code, restart `serve` (the page is embedded).
-Secrets: `JEV_API_TOKEN` from env or `.env` (gitignored). Vertex AI uses application
-default credentials (`gcloud auth application-default login`), project and location from
-env; no key files in the repo.
+Secrets and config come from env or `.env` (gitignored, loaded by `loadEnv`):
+`JEV_API_TOKEN`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `GEMINI_MODELS`.
+Vertex AI uses application default credentials (`gcloud auth application-default login`);
+no key files and no project ids in the repo.
 
 Not recorded today: moves made through `move` or the page are in the event stream and
 the page log, not in `runs/*.jsonl` (only Jev decisions are). A game log that covers

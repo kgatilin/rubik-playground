@@ -25,30 +25,29 @@ import (
 //go:embed index.html
 var indexHTML []byte
 
-// loadToken reads JEV_API_TOKEN from the environment, falling back to .env.
-func loadToken() (string, error) {
-	if t := os.Getenv("JEV_API_TOKEN"); t != "" {
-		return t, nil
+// loadEnv puts KEY=VALUE lines of .env into the environment; real env vars win.
+func loadEnv() {
+	f, err := os.Open(".env")
+	if err != nil {
+		return
 	}
-	if f, err := os.Open(".env"); err == nil {
-		defer f.Close()
-		sc := bufio.NewScanner(f)
-		for sc.Scan() {
-			k, v, ok := strings.Cut(strings.TrimSpace(sc.Text()), "=")
-			if ok && k == "JEV_API_TOKEN" {
-				return strings.Trim(v, `"'`), nil
-			}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		k, v, ok := strings.Cut(strings.TrimSpace(sc.Text()), "=")
+		if ok && !strings.HasPrefix(k, "#") && os.Getenv(k) == "" {
+			os.Setenv(k, strings.Trim(v, `"'`))
 		}
 	}
-	return "", fmt.Errorf("JEV_API_TOKEN is not set (env or .env)")
 }
 
-func newJev() (*Jev, error) {
-	token, err := loadToken()
-	if err != nil {
-		return nil, err
+// newJev returns nil without a token: the other players still work.
+func newJev() *Jev {
+	token := os.Getenv("JEV_API_TOKEN")
+	if token == "" {
+		return nil
 	}
-	return &Jev{Token: token, Client: &http.Client{Timeout: 30 * time.Second}}, nil
+	return &Jev{Token: token, Client: &http.Client{Timeout: 30 * time.Second}}
 }
 
 func randomScramble(n int) []string {
@@ -68,12 +67,8 @@ func serveCmd() *cobra.Command {
 		Use:   "serve",
 		Short: "Serve the cube page",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			jev, err := newJev()
-			if err != nil {
-				return err
-			}
 			mux := http.NewServeMux()
-			newSession(jev).routes(mux)
+			newSession(newJev()).routes(mux)
 			log.Printf("cube at http://%s, run logs in %s/", addr, runsDir)
 			return http.ListenAndServe(addr, mux)
 		},
@@ -96,8 +91,14 @@ func printStep(r *StepRecord) {
 	for _, t := range top[:min(4, len(top))] {
 		parts = append(parts, fmt.Sprintf("%s %.2f", t.m, t.p))
 	}
-	fmt.Printf("#%-3d %-3s conf %.2f  matched %2d→%2d  %4dms  first offered %-3s top: %s\n",
-		r.Step, r.Move, r.Confidence, r.MatchedBefore, r.MatchedAfter, r.Millis, r.Offered[0], strings.Join(parts, ", "))
+	fmt.Printf("#%-3d %-3s matched %2d→%2d  %5dms", r.Step, strings.Join(r.Moves, " "), r.MatchedBefore, r.MatchedAfter, r.Millis)
+	if len(parts) > 0 {
+		fmt.Printf("  conf %.2f  first offered %-3s top: %s", r.Confidence, r.Offered[0], strings.Join(parts, ", "))
+	}
+	fmt.Println()
+	if r.Thoughts != "" {
+		fmt.Println("     " + strings.ReplaceAll(strings.TrimSpace(r.Thoughts), "\n", "\n     "))
+	}
 }
 
 func runCmd() *cobra.Command {
@@ -117,10 +118,19 @@ func runCmd() *cobra.Command {
 			if ui != "" {
 				return runOnServer(ui, req, strings.Fields(scramble), maxMoves)
 			}
-			jev, err := newJev()
-			if err != nil {
-				return err
+			var player Decider
+			if model, ok := strings.CutPrefix(req.Player, "gemini:"); ok {
+				g, err := newGemini(model)
+				if err != nil {
+					return err
+				}
+				player = g
+			} else if jev := newJev(); jev != nil {
+				player = jev
+			} else {
+				return fmt.Errorf("JEV_API_TOKEN is not set (env or .env)")
 			}
+			req.Limit = defaultLimit
 			req.Scramble = strings.Fields(scramble)
 			if scramble == "" {
 				req.Scramble = randomScramble(scrambleLen)
@@ -128,14 +138,18 @@ func runCmd() *cobra.Command {
 			req.Run = newRunID("cli")
 			fmt.Printf("run %s  scramble: %s\n", req.Run, strings.Join(req.Scramble, " "))
 			for range maxMoves {
-				rec, err := jev.Decide(req)
+				rec, err := player.Decide(req)
 				if err != nil {
 					return err
 				}
 				printStep(rec)
-				req.History = append(req.History, rec.Move)
+				req.History = append(req.History, rec.Moves...)
 				if rec.Solved {
-					fmt.Println("solved")
+					fmt.Printf("solved in %d face turns\n", len(req.History))
+					break
+				}
+				if len(req.History) >= req.Limit {
+					fmt.Printf("DNF: turn limit of %d reached\n", req.Limit)
 					break
 				}
 			}
@@ -148,7 +162,8 @@ func runCmd() *cobra.Command {
 	f.Lookup("ui").NoOptDefVal = "localhost:7810"
 	f.StringVar(&scramble, "scramble", "", "scramble moves, e.g. \"R U F'\" (default: random)")
 	f.IntVar(&scrambleLen, "scramble-len", 3, "length of the random scramble")
-	f.IntVar(&maxMoves, "max", 10, "move limit")
+	f.IntVar(&maxMoves, "max", 100, "decision limit (the game itself ends at 100 face turns)")
+	f.StringVar(&req.Player, "player", "jev", "built-in player: jev or gemini:<model>")
 	f.StringVar(&moves, "moves", strings.Join(allMoves, " "), "moves offered per step")
 	f.StringVar(&req.Instructions, "instructions", defaultInstructions, "choice question instructions")
 	f.BoolVar(&req.Sample, "sample", false, "draw the move from the probabilities")
@@ -227,7 +242,7 @@ func playCmds() []*cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(cube.StateText(history))
+			fmt.Println(cube.StateText(history, defaultLimit))
 			return nil
 		},
 	}
@@ -253,7 +268,7 @@ func playCmds() []*cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(cube.StateText(history))
+			fmt.Println(cube.StateText(history, defaultLimit))
 			return nil
 		},
 	}
@@ -303,8 +318,8 @@ func showCmd() *cobra.Command {
 					return err
 				}
 				if first {
-					fmt.Printf("run %s  scramble: %s  sample=%v no_undo=%v shuffle=%v lookahead=%v\ninstructions: %s\n",
-						r.Request.Run, strings.Join(r.Request.Scramble, " "), r.Request.Sample, r.Request.NoUndo, r.Request.Shuffle, r.Request.Lookahead, r.Request.Instructions)
+					fmt.Printf("run %s  player: %s  scramble: %s  sample=%v no_undo=%v shuffle=%v lookahead=%v\ninstructions: %s\n",
+						r.Request.Run, r.Request.Player, strings.Join(r.Request.Scramble, " "), r.Request.Sample, r.Request.NoUndo, r.Request.Shuffle, r.Request.Lookahead, r.Request.Instructions)
 				}
 				printStep(&r)
 				if state {
@@ -320,6 +335,7 @@ func showCmd() *cobra.Command {
 }
 
 func main() {
+	loadEnv()
 	root := &cobra.Command{Use: "jev-playground", SilenceUsage: true}
 	root.AddCommand(serveCmd(), runCmd(), showCmd())
 	root.AddCommand(playCmds()...)

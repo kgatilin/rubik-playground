@@ -24,7 +24,7 @@
   .row { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
   .moves button { width:44px; padding:6px 0; }
   input[type=number] { width:64px; }
-  input, textarea { background:#0d0f13; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font:inherit; }
+  input, textarea, select { background:#0d0f13; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font:inherit; }
   textarea, input[type=text] { width:100%; }
   textarea { height:92px; resize:vertical; }
   label { color:var(--dim); display:flex; gap:6px; align-items:center; }
@@ -33,6 +33,7 @@
   .bar span:last-child { color:var(--dim); text-align:right; }
   #log { white-space:pre-wrap; color:var(--dim); max-height:45vh; overflow:auto; font-size:12px; }
   #log .e { color:var(--err); }
+  #log details { margin:2px 0 6px; } #log details div { border-left:2px solid var(--line); padding-left:8px; margin-top:4px; }
   details pre { font-size:11px; color:var(--dim); white-space:pre-wrap; word-break:break-word; max-height:260px; overflow:auto; margin:6px 0 0; }
   summary { cursor:pointer; color:var(--dim); }
   @media (max-width:860px) { body { grid-template-columns:1fr; grid-template-rows:55vh auto; height:auto; } aside { border-left:0; border-top:1px solid var(--line); } }
@@ -56,10 +57,11 @@
   </section>
 
   <section>
-    <h2>Jev</h2>
-    <label>Moves offered per step</label>
+    <h2>Player</h2>
+    <div class="row"><select id="player"></select><label>built-in player; CLI agents use <b>state</b> / <b>move</b></label></div>
+    <label style="margin-top:8px">Moves offered per step</label>
     <input id="moves" type="text" value="U U' U2 D D' D2 L L' L2 R R' R2 F F' F2 B B' B2">
-    <label style="margin-top:8px">Instructions</label>
+    <label style="margin-top:8px">Instructions (Jev)</label>
     <textarea id="instr">You are solving a 3x3 Rubik's cube. Pick the single next move that brings the cube closer to the solved state, where every face shows one colour. Do not undo the previous move and do not repeat a cycle from the move history.</textarea>
     <div class="row" style="margin-top:8px">
       <label><input id="sample" type="checkbox"> sample from probabilities</label>
@@ -69,8 +71,8 @@
     </div>
     <div class="row" style="margin-top:10px">
       <button class="go" id="run">Run</button>
-      <input id="maxSteps" type="number" min="1" max="500" value="20" title="max moves">
-      <label>moves max</label>
+      <input id="maxSteps" type="number" min="1" max="500" value="100" title="max decisions; the game itself ends at 100 face turns">
+      <label>decisions max</label>
       <button id="step">Step</button>
       <button id="stop" disabled>Stop</button>
     </div>
@@ -228,11 +230,15 @@ let stats = { calls: 0, ms: 0, tokens: 0 };
 function updateHud() {
   const n = matched(facelets());
   $('hud').innerHTML = `stickers on their face <b class="${n === 54 ? 'ok' : ''}">${n}/54</b>${n === 54 ? ' <span class="ok">solved</span>' : ''}`
-    + `<br>moves <b>${history.length}</b>`
-    + (stats.calls ? `<br>jev calls <b>${stats.calls}</b> · avg <b>${Math.round(stats.ms / stats.calls)} ms</b> · <b>${stats.tokens}</b> input tokens` : '');
+    + `<br>face turns <b>${history.length}</b> / 100`
+    + (stats.calls ? `<br>decisions <b>${stats.calls}</b> · avg <b>${Math.round(stats.ms / stats.calls)} ms</b> · <b>${stats.tokens}</b> input tokens` : '');
 }
-function log(text, err) {
+function log(text, err, more) {
   const d = document.createElement('div'); d.textContent = text; if (err) d.className = 'e';
+  if (more) {   // expandable body, e.g. a model's thought summary
+    const det = document.createElement('details'), sum = document.createElement('summary'), body = document.createElement('div');
+    sum.textContent = 'thoughts'; body.textContent = more; det.append(sum, body); d.append(det);
+  }
   $('log').prepend(d);
 }
 
@@ -249,12 +255,14 @@ const send = (path, body) => post(path, body).catch(e => log(e.message, true));
 
 function showDecision(r) {
   stats.calls++; stats.ms += r.ms; stats.tokens += r.input_tokens;
-  const top = Object.entries(r.probabilities).sort((x, y) => y[1] - x[1]).slice(0, 6);
-  $('probs').innerHTML = top.map(([m, p]) =>
-    `<div class="bar"><span>${m === r.move ? '<b>' + m + '</b>' : m}</span><span><i style="width:${p * 100}%"></i></span><span>${(p * 100).toFixed(1)}%</span></div>`).join('')
-    + `<div style="color:var(--dim);margin-top:6px">confidence ${r.confidence.toFixed(2)} · ${r.ms} ms · ${r.model} · runs/${r.request.run}.jsonl</div>`;
+  const moves = r.moves.join(' '), probs = r.probabilities || {};
+  const top = Object.entries(probs).sort((x, y) => y[1] - x[1]).slice(0, 6);
+  $('probs').innerHTML = (top.length ? top.map(([m, p]) =>
+    `<div class="bar"><span>${m === moves ? '<b>' + m + '</b>' : m}</span><span><i style="width:${p * 100}%"></i></span><span>${(p * 100).toFixed(1)}%</span></div>`).join('')
+    : `<div><b>${moves}</b></div>`)
+    + `<div style="color:var(--dim);margin-top:6px">${top.length ? 'confidence ' + r.confidence.toFixed(2) + ' · ' : ''}${r.ms} ms · ${r.model} · runs/${r.request.run}.jsonl</div>`;
   $('raw').textContent = JSON.stringify(r, null, 2);
-  log(`#${r.step} ${r.move}  p=${(r.probabilities[r.move] ?? 0).toFixed(2)}  conf ${r.confidence.toFixed(2)}  ${r.matched_before}→${r.matched_after}  ${r.ms} ms`);
+  log(`#${r.step} ${moves}  ${r.request.player}${top.length ? '  p=' + (probs[moves] ?? 0).toFixed(2) : ''}  ${r.matched_before}→${r.matched_after}  ${r.ms} ms`, false, r.thoughts);
 }
 
 const stream = new EventSource('/api/events');
@@ -262,7 +270,7 @@ stream.onmessage = msg => {
   const e = JSON.parse(msg.data);
   if (e.type === 'decision') return showDecision(e.record);
   if (e.type === 'move') {
-    if (e.by !== 'jev') log(`#${e.history.length} ${e.move}  by ${e.by || 'unknown'}`);   // jev moves are logged with their decision
+    if (!/^(jev$|gemini:)/.test(e.by || '')) log(`#${e.history.length} ${e.move}  by ${e.by || 'unknown'}`);   // jev moves are logged with their decision
     return turn(e.move);
   }
   if (e.type === 'scramble') {
@@ -292,7 +300,13 @@ $('reset').onclick = () => send('/api/reset');
 $('scramble').onclick = () => send('/api/scramble', { len: +$('scrambleN').value || 6 });
 
 // ---------- Jev ----------
-const stepRequest = () => ({ options: $('moves').value.trim().split(/[\s,]+/).filter(Boolean),
+fetch('/api/players').then(r => r.json()).then(list => {
+  $('player').innerHTML = list.map(p => `<option>${p}</option>`).join('');
+  try { const saved = localStorage.getItem('player'); if (list.includes(saved)) $('player').value = saved; } catch {}
+});
+$('player').onchange = () => { try { localStorage.setItem('player', $('player').value); } catch {} };
+
+const stepRequest = () => ({ player: $('player').value, options: $('moves').value.trim().split(/[\s,]+/).filter(Boolean),
   instructions: $('instr').value, sample: $('sample').checked, no_undo: $('noUndo').checked,
   shuffle: $('shuffle').checked, lookahead: $('lookahead').checked });
 
@@ -310,7 +324,7 @@ async function run(limit) {
   } catch (e) { log(e.message, true); }
   running = false; $('run').disabled = $('step').disabled = false; $('stop').disabled = true;
 }
-$('run').onclick = () => run(Math.max(1, Math.min(500, +$('maxSteps').value || 20)));
+$('run').onclick = () => run(Math.max(1, Math.min(500, +$('maxSteps').value || 100)));
 $('step').onclick = () => run(1);
 $('stop').onclick = () => { running = false; };
 

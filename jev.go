@@ -27,15 +27,17 @@ var allMoves = strings.Fields("U U' U2 D D' D2 L L' L2 R R' R2 F F' F2 B B' B2")
 // StepRequest is one decision: the cube is NewCube + Scramble + History.
 // Both the web page and the CLI go through Decide with this.
 type StepRequest struct {
+	Player       string   `json:"player"` // "jev" (default) or "gemini:<model>"
+	Limit        int      `json:"limit"`  // face-turn limit of the game
 	Run          string   `json:"run"`
 	Scramble     []string `json:"scramble"`
 	History      []string `json:"history"`
 	Options      []string `json:"options"`
 	Instructions string   `json:"instructions"`
-	Sample       bool     `json:"sample"`       // draw the move from the probabilities instead of taking the top one
-	NoUndo       bool     `json:"no_undo"`      // do not offer the inverse of the previous move
-	Shuffle      bool     `json:"shuffle"`      // randomise the order in which moves are listed
-	Lookahead    bool     `json:"lookahead"`    // describe each move by the sticker count it leads to
+	Sample       bool     `json:"sample"`    // draw the move from the probabilities instead of taking the top one
+	NoUndo       bool     `json:"no_undo"`   // do not offer the inverse of the previous move
+	Shuffle      bool     `json:"shuffle"`   // randomise the order in which moves are listed
+	Lookahead    bool     `json:"lookahead"` // describe each move by the sticker count it leads to
 }
 
 // StepRecord is the outcome of one decision and one line of runs/<run>.jsonl.
@@ -46,14 +48,16 @@ type StepRecord struct {
 	Offered       []string           `json:"offered"` // in the order sent to Jev
 	State         string             `json:"state"`
 	MatchedBefore int                `json:"matched_before"`
-	Choice        string             `json:"choice"` // Jev's top option
-	Move          string             `json:"move"`   // move actually taken (differs from Choice when sampling)
-	Confidence    float64            `json:"confidence"`
-	Probabilities map[string]float64 `json:"probabilities"`
+	Choice        string             `json:"choice,omitempty"` // Jev's top option
+	Moves         []string           `json:"moves"`            // moves taken by this decision (Jev: one; differs from Choice when sampling)
+	Confidence    float64            `json:"confidence,omitempty"`
+	Probabilities map[string]float64 `json:"probabilities,omitempty"`
+	Thoughts      string             `json:"thoughts,omitempty"` // thought summary, for players that return one
 	MatchedAfter  int                `json:"matched_after"`
 	Solved        bool               `json:"solved"`
 	Model         string             `json:"model"`
 	InputTokens   int                `json:"input_tokens"`
+	OutputTokens  int                `json:"output_tokens,omitempty"`
 	Millis        int64              `json:"ms"`
 }
 
@@ -83,20 +87,25 @@ func (o orderedCriteria) MarshalJSON() ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-// Decide asks Jev for the next move, appends the record to the run log and returns it.
-func (j *Jev) Decide(req StepRequest) (*StepRecord, error) {
+// Decider is a built-in player: one decision on the cube described by the request.
+type Decider interface {
+	Decide(StepRequest) (*StepRecord, error)
+}
+
+// prepareStep rebuilds the cube and the list of moves offered for this decision.
+func prepareStep(req StepRequest) (*Cube, []string, error) {
 	cube := NewCube()
 	if err := cube.ApplyAll(req.Scramble); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := cube.ApplyAll(req.History); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var offered []string
 	for _, m := range req.Options {
 		if !ValidMove(m) {
-			return nil, fmt.Errorf("unknown move %q", m)
+			return nil, nil, fmt.Errorf("unknown move %q", m)
 		}
 		if !slices.Contains(offered, m) {
 			offered = append(offered, m)
@@ -107,14 +116,38 @@ func (j *Jev) Decide(req StepRequest) (*StepRecord, error) {
 		offered = slices.DeleteFunc(offered, func(m string) bool { return m == undo })
 	}
 	if len(offered) == 0 {
-		return nil, fmt.Errorf("no moves offered")
+		return nil, nil, fmt.Errorf("no moves offered")
 	}
 	if req.Shuffle {
 		rand.Shuffle(len(offered), func(a, b int) { offered[a], offered[b] = offered[b], offered[a] })
 	}
+	return cube, offered, nil
+}
 
+// finishStep applies the decided moves (cut at the turn limit), fills the outcome
+// and appends the record to the run log.
+func finishStep(rec *StepRecord, cube *Cube) error {
+	if left := rec.Request.Limit - len(rec.Request.History); rec.Request.Limit > 0 && len(rec.Moves) > left {
+		rec.Moves = rec.Moves[:max(left, 0)]
+	}
+	for _, m := range rec.Moves {
+		if !slices.Contains(rec.Offered, m) {
+			return fmt.Errorf("%s chose a move that was not offered: %q", rec.Request.Player, m)
+		}
+		cube.Apply(m)
+	}
+	rec.MatchedAfter, rec.Solved = cube.Matched(), cube.Solved()
+	return appendRunLog(rec)
+}
+
+// Decide asks Jev for the next move, appends the record to the run log and returns it.
+func (j *Jev) Decide(req StepRequest) (*StepRecord, error) {
+	cube, offered, err := prepareStep(req)
+	if err != nil {
+		return nil, err
+	}
 	rec := &StepRecord{Time: time.Now().UTC(), Step: len(req.History) + 1, Request: req, Offered: offered,
-		State: cube.StateText(req.History), MatchedBefore: cube.Matched()}
+		State: cube.StateText(req.History, req.Limit), MatchedBefore: cube.Matched()}
 
 	criteria := make(orderedCriteria, len(offered))
 	for i, m := range offered {
@@ -164,7 +197,8 @@ func (j *Jev) Decide(req StepRequest) (*StepRecord, error) {
 		return nil, fmt.Errorf("jev response: %w: %s", err, raw)
 	}
 	a := out.Answers["next_move"]
-	rec.Choice, rec.Move, rec.Confidence, rec.Probabilities = a.Choice, a.Choice, a.Confidence, a.Probabilities
+	rec.Choice, rec.Confidence, rec.Probabilities = a.Choice, a.Confidence, a.Probabilities
+	move := a.Choice
 	rec.Model, rec.InputTokens = out.Model, out.Usage.InputTokens
 
 	if req.Sample {
@@ -175,18 +209,13 @@ func (j *Jev) Decide(req StepRequest) (*StepRecord, error) {
 		r := rand.Float64() * total
 		for _, m := range offered {
 			if r -= a.Probabilities[m]; r <= 0 {
-				rec.Move = m
+				move = m
 				break
 			}
 		}
 	}
-	if !slices.Contains(offered, rec.Move) {
-		return nil, fmt.Errorf("jev chose a move that was not offered: %q", rec.Move)
-	}
-
-	cube.Apply(rec.Move)
-	rec.MatchedAfter, rec.Solved = cube.Matched(), cube.Solved()
-	return rec, appendRunLog(rec)
+	rec.Moves = []string{move}
+	return rec, finishStep(rec, cube)
 }
 
 func appendRunLog(rec *StepRecord) error {

@@ -214,7 +214,7 @@ func (c *Cube) Progress() Progress {
 }
 
 // StateText is the cube description sent to Jev as `state`.
-func (c *Cube) StateText(history []string) string {
+func (c *Cube) StateText(history []string, limit int) string {
 	g := c.Facelets()
 	var b strings.Builder
 	b.WriteString("3x3 Rubik's cube. Colours: W white, Y yellow, R red, O orange, G green, B blue.\n")
@@ -234,6 +234,9 @@ func (c *Cube) StateText(history []string) string {
 	fmt.Fprintf(&b, "Middle layer: edges solved %d/4\n", p.MiddleEdges)
 	fmt.Fprintf(&b, "U layer (white): edges white-up %d/4, edges solved %d/4, corners in place %d/4, corners solved %d/4",
 		p.UEdgesWhiteUp, p.UEdgesSolved, p.UCornersInPlace, p.UCornersSolved)
+	if limit > 0 {
+		fmt.Fprintf(&b, "\nFace turns used: %d of %d", len(history), limit)
+	}
 	if len(history) > 0 {
 		last := history[len(history)-1]
 		fmt.Fprintf(&b, "\nMoves made so far (%d): %s\n", len(history), strings.Join(history, " "))

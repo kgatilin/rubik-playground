@@ -6,15 +6,22 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"slices"
+	"strings"
 	"sync"
 )
+
+const defaultLimit = 100 // face turns per game
 
 // Session is the one cube the server owns: solved + Scramble + History.
 // The page is a view over its event stream; page buttons and `run --ui`
 // change it through the same endpoints.
 type Session struct {
 	mu       sync.Mutex
+	stepMu   sync.Mutex // one built-in decision at a time; s.mu is not held while a model thinks
 	jev      *Jev
+	gemini   map[string]*Gemini // one conversation per model per game
 	run      string
 	scramble []string
 	history  []string
@@ -31,10 +38,28 @@ type event struct {
 	Record   *StepRecord `json:"record,omitempty"`
 }
 
-var errSolved = errors.New("cube is already solved")
+var (
+	errSolved = errors.New("cube is already solved")
+	errLimit  = fmt.Errorf("turn limit of %d reached", defaultLimit)
+)
+
+// players lists what the page can pick: jev plus gemini:<model> for GEMINI_MODELS.
+func players() []string {
+	models := os.Getenv("GEMINI_MODELS")
+	if models == "" {
+		models = "gemini-3.8-flash,gemini-3.1-pro-preview,gemini-3.5-flash"
+	}
+	out := []string{"jev"}
+	for _, m := range strings.Split(models, ",") {
+		if m = strings.TrimSpace(m); m != "" {
+			out = append(out, "gemini:"+m)
+		}
+	}
+	return out
+}
 
 func newSession(jev *Jev) *Session {
-	return &Session{jev: jev, run: newRunID("ui"), subs: map[chan []byte]struct{}{}}
+	return &Session{jev: jev, run: newRunID("ui"), gemini: map[string]*Gemini{}, subs: map[chan []byte]struct{}{}}
 }
 
 // publish sends an event to every connected page; callers hold s.mu.
@@ -52,7 +77,7 @@ func (s *Session) publish(e event) {
 func (s *Session) Reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.scramble, s.history, s.run = nil, nil, newRunID("ui")
+	s.scramble, s.history, s.run, s.gemini = nil, nil, newRunID("ui"), map[string]*Gemini{}
 	s.publish(event{Type: "sync"})
 }
 
@@ -66,7 +91,7 @@ func (s *Session) Scramble(moves []string) error {
 		}
 	}
 	s.scramble = append(append(s.scramble, s.history...), moves...)
-	s.history, s.run = nil, newRunID("ui")
+	s.history, s.run, s.gemini = nil, newRunID("ui"), map[string]*Gemini{}
 	s.publish(event{Type: "scramble", Moves: moves})
 	return nil
 }
@@ -77,29 +102,74 @@ func (s *Session) Move(m, by string) error {
 	if !ValidMove(m) {
 		return fmt.Errorf("unknown move %q", m)
 	}
+	if len(s.history) >= defaultLimit {
+		return errLimit
+	}
 	s.history = append(s.history, m)
 	s.publish(event{Type: "move", Move: m, By: by})
 	return nil
 }
 
-// Step asks Jev for one move on the current cube and applies it.
-func (s *Session) Step(req StepRequest) (*StepRecord, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	req.Run, req.Scramble, req.History = s.run, s.scramble, s.history
-	cube := NewCube()
-	cube.ApplyAll(s.scramble)
-	cube.ApplyAll(s.history)
-	if cube.Solved() {
-		return nil, errSolved
+// decider returns the built-in player for the request; callers hold s.mu.
+func (s *Session) decider(player string) (Decider, error) {
+	model, isGemini := strings.CutPrefix(player, "gemini:")
+	if !isGemini {
+		if s.jev == nil {
+			return nil, errors.New("JEV_API_TOKEN is not set (env or .env)")
+		}
+		return s.jev, nil
 	}
-	rec, err := s.jev.Decide(req)
+	if g := s.gemini[model]; g != nil {
+		return g, nil
+	}
+	g, err := newGemini(model)
 	if err != nil {
 		return nil, err
 	}
-	s.history = append(s.history, rec.Move)
+	s.gemini[model] = g
+	return g, nil
+}
+
+// Step asks a built-in player for one decision on the current cube and applies it.
+func (s *Session) Step(req StepRequest) (*StepRecord, error) {
+	s.stepMu.Lock()
+	defer s.stepMu.Unlock()
+
+	if req.Player == "" {
+		req.Player = "jev"
+	}
+	s.mu.Lock()
+	req.Run, req.Limit = s.run, defaultLimit
+	req.Scramble, req.History = slices.Clone(s.scramble), slices.Clone(s.history)
+	cube := NewCube()
+	cube.ApplyAll(s.scramble)
+	cube.ApplyAll(s.history)
+	d, err := s.decider(req.Player)
+	s.mu.Unlock()
+	switch {
+	case err != nil:
+		return nil, err
+	case cube.Solved():
+		return nil, errSolved
+	case len(req.History) >= defaultLimit:
+		return nil, errLimit
+	}
+
+	rec, err := d.Decide(req)
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.run != req.Run || len(s.history) != len(req.History) {
+		return nil, errors.New("the cube changed while the player was deciding; decision dropped")
+	}
 	s.publish(event{Type: "decision", Record: rec})
-	s.publish(event{Type: "move", Move: rec.Move, By: "jev"})
+	for _, m := range rec.Moves {
+		s.history = append(s.history, m)
+		s.publish(event{Type: "move", Move: m, By: rec.Request.Player})
+	}
 	return rec, nil
 }
 
@@ -144,7 +214,7 @@ func post[T any](fn func(T) (any, error)) http.HandlerFunc {
 		out, err := fn(in)
 		if err != nil {
 			code := http.StatusBadGateway
-			if errors.Is(err, errSolved) {
+			if errors.Is(err, errSolved) || errors.Is(err, errLimit) {
 				code = http.StatusConflict
 			}
 			log.Printf("%s: %v", r.URL.Path, err)
@@ -162,6 +232,10 @@ func (s *Session) routes(mux *http.ServeMux) {
 		w.Write(indexHTML)
 	})
 	mux.HandleFunc("/api/events", s.events)
+	mux.HandleFunc("/api/players", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(players())
+	})
 	mux.HandleFunc("/api/state", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
