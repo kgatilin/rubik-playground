@@ -20,6 +20,7 @@ const defaultLimit = 100 // face turns per game
 // The page is a view over its event stream; page buttons and `run --ui`
 // change it through the same endpoints.
 type Session struct {
+	name     string // "" is the sandbox cube; a game session is named after its player
 	mu       sync.Mutex
 	stepMu   sync.Mutex // one built-in decision at a time; s.mu is not held while a model thinks
 	jev      *Jev
@@ -61,6 +62,71 @@ func players() []string {
 		if m = strings.TrimSpace(m); m != "" {
 			out = append(out, "gemini:"+m)
 		}
+	}
+	return out
+}
+
+// Hub holds the cubes of one serve: the sandbox and one session per registered
+// player, so games run side by side. A session is picked with ?game=<player>.
+type Hub struct {
+	mu       sync.Mutex
+	jev      *Jev
+	sessions map[string]*Session
+	order    []string // registration order, sandbox first
+}
+
+func newHub(jev *Jev) *Hub {
+	return &Hub{jev: jev, sessions: map[string]*Session{"": newSession(jev)}, order: []string{""}}
+}
+
+func (h *Hub) get(name string) (*Session, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if s := h.sessions[name]; s != nil {
+		return s, nil
+	}
+	return nil, fmt.Errorf("no game for %q: register with play --as %s", name, name)
+}
+
+// Play registers the player in a session of its own; registering again restarts it there.
+func (h *Hub) Play(in PlayRequest) (*Game, error) {
+	in.Player = strings.TrimSpace(in.Player)
+	if in.Player == "" {
+		return nil, errors.New("a game needs a player name")
+	}
+	h.mu.Lock()
+	s := h.sessions[in.Player]
+	if s == nil {
+		s = newSession(h.jev)
+		s.name = in.Player
+		h.sessions[in.Player] = s
+		h.order = append(h.order, in.Player)
+	}
+	h.mu.Unlock()
+	return s.Play(in)
+}
+
+// GameInfo is one line of the page's game switcher.
+type GameInfo struct {
+	Name    string `json:"name"`
+	Turns   int    `json:"turns"`
+	Open    bool   `json:"open"` // a registered game is being played
+	Solved  bool   `json:"solved"`
+	Matched int    `json:"matched"`
+}
+
+func (h *Hub) games() []GameInfo {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]GameInfo, 0, len(h.order))
+	for _, name := range h.order {
+		s := h.sessions[name]
+		s.mu.Lock()
+		cube := NewCube()
+		cube.ApplyAll(s.scramble)
+		cube.ApplyAll(s.history)
+		out = append(out, GameInfo{Name: name, Turns: len(s.history), Open: s.game != nil, Solved: cube.Solved(), Matched: cube.Matched()})
+		s.mu.Unlock()
 	}
 	return out
 }
@@ -137,6 +203,9 @@ func (s *Session) Move(moves []string, by string) error {
 func (s *Session) decider(player string) (Decider, error) {
 	model, isGemini := strings.CutPrefix(player, "gemini:")
 	if !isGemini {
+		if player != "jev" {
+			return nil, fmt.Errorf("%s is not a built-in player: it moves through the CLI", player)
+		}
 		if s.jev == nil {
 			return nil, errors.New("JEV_API_TOKEN is not set (env or .env)")
 		}
@@ -232,7 +301,7 @@ func (s *Session) events(w http.ResponseWriter, r *http.Request) {
 }
 
 // post wraps a JSON command handler: decode the body, run it, encode the result.
-func post[T any](fn func(context.Context, T) (any, error)) http.HandlerFunc {
+func post[T any](fn func(*http.Request, T) (any, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var in T
 		if r.Method != http.MethodPost {
@@ -243,7 +312,7 @@ func post[T any](fn func(context.Context, T) (any, error)) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		out, err := fn(r.Context(), in)
+		out, err := fn(r, in)
 		if err != nil {
 			code := http.StatusBadGateway
 			if errors.Is(err, errSolved) || errors.Is(err, errLimit) {
@@ -258,51 +327,85 @@ func post[T any](fn func(context.Context, T) (any, error)) http.HandlerFunc {
 	}
 }
 
-func (s *Session) routes(mux *http.ServeMux) {
+func (h *Hub) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(indexHTML)
 	})
-	mux.HandleFunc("/api/events", s.events)
-	mux.HandleFunc("/api/players", func(w http.ResponseWriter, r *http.Request) {
+	writeJSON := func(w http.ResponseWriter, v any) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(players())
+		json.NewEncoder(w).Encode(v)
+	}
+	session := func(w http.ResponseWriter, r *http.Request) *Session {
+		s, err := h.get(r.URL.Query().Get("game"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+		}
+		return s
+	}
+	mux.HandleFunc("/api/events", func(w http.ResponseWriter, r *http.Request) {
+		if s := session(w, r); s != nil {
+			s.events(w, r)
+		}
 	})
 	mux.HandleFunc("/api/state", func(w http.ResponseWriter, r *http.Request) {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(event{Type: "sync", Scramble: s.scramble, History: s.history})
+		if s := session(w, r); s != nil {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			writeJSON(w, event{Type: "sync", Scramble: s.scramble, History: s.history})
+		}
 	})
+	mux.HandleFunc("/api/players", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, players()) })
+	mux.HandleFunc("/api/games", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, h.games()) })
 	mux.HandleFunc("/api/leaderboard", func(w http.ResponseWriter, r *http.Request) {
 		rows, err := leaderboard()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(rows)
+		writeJSON(w, rows)
 	})
-	mux.HandleFunc("/api/play", post(func(_ context.Context, in PlayRequest) (any, error) { return s.Play(in) }))
-	mux.HandleFunc("/api/reset", post(func(context.Context, struct{}) (any, error) { s.Reset(); return struct{}{}, nil }))
-	mux.HandleFunc("/api/move", post(func(_ context.Context, in struct {
+	mux.HandleFunc("/api/play", post(func(_ *http.Request, in PlayRequest) (any, error) { return h.Play(in) }))
+	mux.HandleFunc("/api/reset", post(func(r *http.Request, _ struct{}) (any, error) {
+		s, err := h.get(r.URL.Query().Get("game"))
+		if err != nil {
+			return nil, err
+		}
+		s.Reset()
+		return struct{}{}, nil
+	}))
+	mux.HandleFunc("/api/move", post(func(r *http.Request, in struct {
 		Move  string // one move, or
 		Moves []string
 		By    string
 	}) (any, error) {
+		s, err := h.get(r.URL.Query().Get("game"))
+		if err != nil {
+			return nil, err
+		}
 		if in.Move != "" {
 			in.Moves = append(in.Moves, in.Move)
 		}
 		return struct{}{}, s.Move(in.Moves, in.By)
 	}))
-	mux.HandleFunc("/api/scramble", post(func(_ context.Context, in struct {
+	mux.HandleFunc("/api/scramble", post(func(r *http.Request, in struct {
 		Moves []string
 		Len   int
 	}) (any, error) {
+		s, err := h.get(r.URL.Query().Get("game"))
+		if err != nil {
+			return nil, err
+		}
 		if len(in.Moves) == 0 {
 			in.Moves = randomScramble(max(1, min(in.Len, 60)))
 		}
 		return in.Moves, s.Scramble(in.Moves)
 	}))
-	mux.HandleFunc("/api/step", post(func(ctx context.Context, req StepRequest) (any, error) { return s.Step(ctx, req) }))
+	mux.HandleFunc("/api/step", post(func(r *http.Request, req StepRequest) (any, error) {
+		s, err := h.get(r.URL.Query().Get("game"))
+		if err != nil {
+			return nil, err
+		}
+		return s.Step(r.Context(), req)
+	}))
 }

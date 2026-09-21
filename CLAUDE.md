@@ -11,7 +11,10 @@ implemented yet. Everything else matches the code.
 
 ## The game
 
-- One cube per `serve` process: solved + scramble + the moves made since.
+- A cube is solved + scramble + the moves made since. One `serve` holds several (`Hub`):
+  the sandbox cube, and one session per registered player, so games run side by side.
+  `?game=<player>` on the API and `--as <player>` on the CLI pick a session; without them
+  it is the sandbox.
 - Goal: solve it in the fewest face turns. Limit: 100 face turns per game
   (`defaultLimit`); the server refuses moves past it and a decision's move list is cut
   at it. Reaching the limit unsolved is a DNF. `run --max` and the page's "decisions
@@ -27,9 +30,11 @@ implemented yet. Everything else matches the code.
 
 A game is one registered attempt (`game.go`). Registration (`play --as <model>`, the page's
 Play button, `run --ui --game`) drops the open game, gives the cube a fresh random 20-move
-scramble and opens a game under that name. One game per `serve` at a time. It closes by
-itself: `solved`, `dnf` at the turn limit, or `abandoned` when a new registration, scramble
-or reset arrives. A closed game is one line of `runs/games.jsonl`: player, category,
+scramble and opens a game under that name, in the player's own session; other players'
+games are not touched. One open game per name: two parallel runs of one model need two
+names. It closes by
+itself: `solved`, `dnf` at the turn limit, or `abandoned` when the same name registers
+again or its cube is scrambled or reset. A closed game is one line of `runs/games.jsonl`: player, category,
 scramble, every move in order, decisions (built-in players), times, outcome.
 
 The leaderboard (`leaderboard` command, `/api/leaderboard`, the page panel) is computed
@@ -42,7 +47,8 @@ a step by another built-in player is refused while a game is open.
 Not covered: the name is whatever the player declares; a forfeit (reading the scramble) is
 not detected; every move made while a game is open counts towards it, including moves from
 the page; scrambles are random per attempt, so compare players by the mean over many games;
-a game open when `serve` stops is not recorded.
+a game open when `serve` stops is not recorded; sessions live in memory until then, finished
+ones included.
 
 ## Players
 
@@ -66,8 +72,9 @@ turn accounting and the same log:
 ### Rules for external (CLI) players
 
 - Allowed commands: `jev-playground play --as <name>` (register: fresh scramble, the
-  result goes to the leaderboard under that name), `jev-playground state`,
-  `jev-playground move <actions> --as <name>`; each takes `--pieces` or `--image <file>`.
+  result goes to the leaderboard under that name), `jev-playground state --as <name>`,
+  `jev-playground move <actions> --as <name>`; `--as` is what points them at the player's
+  own cube; each takes `--pieces` or `--image <file>`.
   `jev-playground actions` **(proposed)**. Nothing else touches the cube.
 - A leaderboard attempt starts with `play` and is played in one observation mode, the one
   given to `play`. Calling `play` again drops the attempt as `abandoned`.
@@ -184,7 +191,7 @@ Stated so results are read correctly; none of it is compensated unless listed.
   JSON line per decision in `runs/<run>.jsonl`.
 - `gemini.go` — `Gemini.Decide`: the tool-calling conversation.
 - `game.go` — `Game`, `Session.Play`, game closing, `leaderboard` over `runs/games.jsonl`.
-- `server.go` — `Session` (the served cube), SSE event stream `/api/events`, commands
+- `server.go` — `Hub` (the sessions of one serve, `/api/games`), `Session` (one served cube), SSE event stream `/api/events`, commands
   `/api/reset`, `/api/scramble`, `/api/move`, `/api/step`. The page only renders events.
 - `main.go` — cobra commands: `serve`, `run [--ui [--game]]`, `show`, `state`, `move`,
   `play`, `leaderboard`.
@@ -192,7 +199,9 @@ Stated so results are read correctly; none of it is compensated unless listed.
   main surface: one card per decision (moves, sticker delta, probabilities or thought
   summary, the observation the player saw, the raw record), one line per `move` call of a
   CLI agent or click by hand (turn numbers, the moves, the pause before the call, the time
-  since the game started; events carry a server `time`, and the moves of one call share it), separators for game start and end. Above the log: the player,
+  since the game started; events carry a server `time`, and the moves of one call share it), separators for game start and end. Above the log: the game tabs
+  (sandbox and every player's session, polled from `/api/games`; a tab switches the event
+  stream, so the cube and the log are that game's), the player,
   thinking level and faces (observation) selectors, Play (register a leaderboard game and
   run), Run (keep playing the current cube), Step, Stop, and the Leaderboard panel. The
   server replays the current game's events on connect
@@ -200,6 +209,9 @@ Stated so results are read correctly; none of it is compensated unless listed.
 
 The page's Stop aborts the `/api/step` request; the request context reaches the model call
 (`Decider.Decide(ctx, …)`), so the decision in progress is cancelled and nothing is applied.
+The run loop of a built-in player lives in the page, one per game, and keeps going while
+another tab is shown; closing the page stops it (`run --ui --game` in a terminal does not
+depend on the page).
 
 Build and check: `go vet ./... && go test ./... && go build -o jev-playground .`
 After changing `index.html` or Go code, restart `serve` (the page is embedded).

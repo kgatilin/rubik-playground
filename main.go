@@ -9,11 +9,13 @@ import (
 	"cmp"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -69,7 +71,7 @@ func serveCmd() *cobra.Command {
 		Short: "Serve the cube page",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mux := http.NewServeMux()
-			newSession(newJev()).routes(mux)
+			newHub(newJev()).routes(mux)
 			log.Printf("cube at http://%s, run logs in %s/", addr, runsDir)
 			return http.ListenAndServe(addr, mux)
 		},
@@ -197,6 +199,10 @@ func call(addr, path string, in, out any) error {
 
 // runOnServer plays on the served cube: the page animates every move.
 func runOnServer(addr string, req StepRequest, scramble []string, maxMoves int, game bool) error {
+	session := ""
+	if game {
+		session = gameQuery(req.Player)
+	}
 	call := func(path string, in, out any) error { return call(addr, path, in, out) }
 	if game {
 		in := PlayRequest{Player: req.Player, Observation: req.Observation, Lookahead: req.Lookahead}
@@ -217,7 +223,7 @@ func runOnServer(addr string, req StepRequest, scramble []string, maxMoves int, 
 	var rec StepRecord
 	for range maxMoves {
 		rec = StepRecord{}
-		if err := call("/api/step", req, &rec); err != nil {
+		if err := call("/api/step"+session, req, &rec); err != nil {
 			return err
 		}
 		printStep(&rec)
@@ -230,13 +236,25 @@ func runOnServer(addr string, req StepRequest, scramble []string, maxMoves int, 
 	return nil
 }
 
-// servedCube fetches the session of a running `serve` and rebuilds its cube.
-func servedCube(addr string) (*Cube, []string, error) {
-	resp, err := http.Get("http://" + addr + "/api/state")
+// gameQuery picks a player's session on the server; no name is the sandbox cube.
+func gameQuery(player string) string {
+	if player == "" {
+		return ""
+	}
+	return "?game=" + url.QueryEscape(player)
+}
+
+// servedCube fetches a session of a running `serve` and rebuilds its cube.
+func servedCube(addr, player string) (*Cube, []string, error) {
+	resp, err := http.Get("http://" + addr + "/api/state" + gameQuery(player))
 	if err != nil {
 		return nil, nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		msg, _ := io.ReadAll(resp.Body)
+		return nil, nil, errors.New(strings.TrimSpace(string(msg)))
+	}
 	var st event
 	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
 		return nil, nil, err
@@ -248,11 +266,11 @@ func servedCube(addr string) (*Cube, []string, error) {
 
 // playCmds are for a player other than Jev: read the served cube, think, move.
 func playCmds() []*cobra.Command {
-	var addr, by, imagePath string
+	var addr, player, imagePath string
 	var pieces bool
 	// observe prints the observation; with --image the faces go to a PNG instead of the text rows.
 	observe := func() error {
-		cube, history, err := servedCube(addr)
+		cube, history, err := servedCube(addr, player)
 		if err != nil {
 			return err
 		}
@@ -285,13 +303,12 @@ func playCmds() []*cobra.Command {
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			moves := strings.Fields(strings.Join(args, " "))
-			if err := call(addr, "/api/move", map[string]any{"moves": moves, "by": by}, &struct{}{}); err != nil {
+			if err := call(addr, "/api/move"+gameQuery(player), map[string]any{"moves": moves, "by": cmp.Or(player, "cli")}, &struct{}{}); err != nil {
 				return err
 			}
 			return observe()
 		},
 	}
-	var player string
 	play := &cobra.Command{
 		Use:   "play --as <model>",
 		Short: "Register for a leaderboard game: fresh 20-move scramble, the result is recorded under the name",
@@ -310,14 +327,13 @@ func playCmds() []*cobra.Command {
 			return observe()
 		},
 	}
-	play.Flags().StringVar(&player, "as", "", "model name the result is recorded under")
-	play.MarkFlagRequired("as")
 	for _, c := range []*cobra.Command{state, move, play} {
+		c.Flags().StringVar(&player, "as", "", "player name: picks the player's own game; without it, the sandbox cube")
 		c.Flags().StringVar(&addr, "ui", "localhost:7810", "address of the running serve")
 		c.Flags().BoolVar(&pieces, "pieces", false, "list corners and edges by place instead of the face rows")
 		c.Flags().StringVar(&imagePath, "image", "", "write the faces as a PNG to this file instead of printing them as text")
 	}
-	move.Flags().StringVar(&by, "as", "cli", "player name shown in the page log")
+	play.MarkFlagRequired("as")
 	board := &cobra.Command{
 		Use:   "leaderboard",
 		Short: "Print the leaderboard computed from " + runsDir + "/" + gamesFile + ".jsonl",

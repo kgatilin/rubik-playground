@@ -28,6 +28,9 @@
   label { color:var(--dim); display:flex; gap:6px; align-items:center; }
   .row { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
 
+  #games { display:flex; gap:6px; flex-wrap:wrap; padding:8px 14px; border-bottom:1px solid var(--line); }
+  #games button { font:11.5px/1.4 var(--mono); padding:3px 8px; } #games button.on { border-color:var(--accent, #4ea1ff); color:#fff; }
+  #games button .st { color:var(--dim); margin-left:6px; }
   #settings, #board { border-bottom:1px solid var(--line); }
   #board > summary { padding:8px 14px; cursor:pointer; color:var(--dim); font-size:11px; letter-spacing:.1em; text-transform:uppercase; list-style-position:inside; }
   #board .body { padding:0 14px 12px; max-height:34vh; overflow:auto; }
@@ -89,6 +92,8 @@
     <input id="scrambleN" type="number" min="1" max="60" value="20" title="scramble length">
     <button id="reset">Reset</button>
   </div>
+
+  <div id="games" title="cubes on this server: the sandbox and one per registered player"></div>
 
   <details id="settings">
     <summary>Settings</summary>
@@ -371,8 +376,11 @@ async function post(path, body = {}, signal) {
 }
 const send = (path, body) => post(path, body).catch(e => log(e.message, true));
 
-const stream = new EventSource('/api/events');
-stream.onmessage = msg => {
+// The page shows one cube of the server at a time: the sandbox ('') or a player's game.
+let currentGame = '', stream = null;
+try { currentGame = localStorage.getItem('game') || ''; } catch {}
+const api = (path, game = currentGame) => path + (game ? '?game=' + encodeURIComponent(game) : '');
+function onEvent(msg) {
   const e = JSON.parse(msg.data);
   if (e.type === 'sync') {   // rebuild without animation, replay the game log
     chain = chain.then(() => {
@@ -391,20 +399,37 @@ stream.onmessage = msg => {
     e.moves.forEach(mv => turn(mv, 70, false));
     chain = chain.then(() => { history = []; updateHud(); });
   }
-};
-stream.onerror = () => log('event stream lost, reconnecting', true);
+  if (e.type === 'game') loadGames();
+}
+function watch(game) {
+  currentGame = game; try { localStorage.setItem('game', game); } catch {}
+  stream?.close();
+  stream = new EventSource(api('/api/events'));
+  stream.onmessage = onEvent;
+  stream.onerror = () => { if (currentGame && stream.readyState === EventSource.CLOSED) watch(''); };   // the game is gone (server restarted)
+  loadGames(); syncButtons();
+}
+function loadGames() {
+  fetch('/api/games').then(r => r.json()).then(list => {
+    if (!list.some(g => g.name === currentGame)) return watch('');
+    $('games').innerHTML = list.map(g => `<button data-game="${esc(g.name)}" class="${g.name === currentGame ? 'on' : ''}">${esc(g.name || 'sandbox')}`
+      + `<span class="st">${g.solved && g.turns ? 'solved · ' : g.open ? '' : g.name ? 'over · ' : ''}${g.turns} turns${runs.has(g.name) ? ' · running' : ''}</span></button>`).join('');
+  }).catch(() => {});
+}
+$('games').onclick = e => { const b = e.target.closest('button'); if (b && b.dataset.game !== currentGame) watch(b.dataset.game); };
+setInterval(loadGames, 2000);
 
 for (const f of 'UDLRFB') for (const m of ['', "'"]) {
-  const b = document.createElement('button'); b.textContent = f + m; b.onclick = () => send('/api/move', { move: f + m, by: 'page' });
+  const b = document.createElement('button'); b.textContent = f + m; b.onclick = () => send(api('/api/move'), { move: f + m, by: 'page' });
   $('manual').append(b);
 }
 addEventListener('keydown', e => {
   if (e.target.matches('input, textarea, select') || e.metaKey || e.ctrlKey) return;
   const f = e.key.toUpperCase();
-  if (AXIS[f]) send('/api/move', { move: f + (e.shiftKey ? "'" : ''), by: 'page' });
+  if (AXIS[f]) send(api('/api/move'), { move: f + (e.shiftKey ? "'" : ''), by: 'page' });
 });
-$('reset').onclick = () => send('/api/reset');
-$('scramble').onclick = () => send('/api/scramble', { len: +$('scrambleN').value || 20 });
+$('reset').onclick = () => send(api('/api/reset'));
+$('scramble').onclick = () => send(api('/api/scramble'), { len: +$('scrambleN').value || 20 });
 
 // ---------- leaderboard ----------
 const secs = t => t ? (t >= 60 ? `${Math.floor(t / 60)}m${String(Math.round(t % 60)).padStart(2, '0')}s` : `${Math.round(t)}s`) : '–';
@@ -431,39 +456,50 @@ fetch('/api/players').then(r => r.json()).then(list => {
 $('player').onchange = () => { showThinking(); try { localStorage.setItem('player', $('player').value); } catch {} };
 const playerId = () => $('player').value + ($('player').value.startsWith('gemini:') && $('thinking').value ? '@' + $('thinking').value : '');
 
-const stepRequest = () => ({ player: playerId(), options: $('moves').value.trim().split(/[\s,]+/).filter(Boolean),
+// In a player's game the player is the game's owner, whatever the selector shows now.
+const stepRequest = (game = currentGame) => ({ player: game || playerId(), options: $('moves').value.trim().split(/[\s,]+/).filter(Boolean),
   instructions: $('instr').value, sample: $('sample').checked, no_undo: $('noUndo').checked,
   shuffle: $('shuffle').checked, lookahead: $('lookahead').checked,
   observation: $('observation').value });
 
-let running = false, inFlight = null;   // Stop aborts the decision being waited for; the server drops it
-async function run(limit) {
-  if (running) return;
-  running = true; $('play').disabled = $('run').disabled = $('step').disabled = true; $('stop').disabled = false;
+// Built-in players run per game, so several games go on while the page shows one of them.
+// The loop lives in this page: closing the page stops its runs.
+const runs = new Map();   // game -> { abort } of the run in progress; Stop aborts the decision being waited for, the server drops it
+function syncButtons() {
+  const busy = runs.has(currentGame);
+  $('run').disabled = $('step').disabled = busy; $('stop').disabled = !busy;
+}
+async function run(limit, game = currentGame) {
+  if (runs.has(game)) return;
+  const me = { abort: null, stop: false }; runs.set(game, me); syncButtons();
+  const say = (html, err) => { if (game === currentGame) note(html, err); };
   let done = 0, last = null;
   try {
-    for (; done < limit && running; done++) {
-      inFlight = new AbortController();
-      last = await post('/api/step', stepRequest(), inFlight.signal);
+    for (; done < limit && !me.stop; done++) {
+      me.abort = new AbortController();
+      last = await post(api('/api/step', game), stepRequest(game), me.abort.signal);
       if (last.solved) { done++; break; }
     }
     if (limit > 1 && last) {
       const turns = last.step + last.moves.length - 1;
-      note(last.solved ? `<b>solved</b> in ${turns} face turns, ${done} decisions` : `stopped after ${done} decisions, ${turns} face turns: ${last.matched_after}/54 stickers in place`);
+      say(last.solved ? `<b>solved</b> in ${turns} face turns, ${done} decisions` : `stopped after ${done} decisions, ${turns} face turns: ${last.matched_after}/54 stickers in place`);
     }
-  } catch (e) { if (e.name === 'AbortError') note(`stopped: the decision in progress was dropped`); else log(e.message, true); }
-  running = false; $('play').disabled = $('run').disabled = $('step').disabled = false; $('stop').disabled = true;
+  } catch (e) { if (e.name === 'AbortError') say('stopped: the decision in progress was dropped'); else say(esc(`${game || 'sandbox'}: ${e.message}`), true); }
+  runs.delete(game); syncButtons(); loadGames();
 }
-$('run').onclick = () => run(Math.max(1, Math.min(500, +$('maxSteps').value || 100)));
+const maxSteps = () => Math.max(1, Math.min(500, +$('maxSteps').value || 100));
+$('run').onclick = () => run(maxSteps());
 $('play').onclick = async () => {
-  if (running) return;
   const r = stepRequest();
+  if (runs.has(r.player)) return log(`${r.player} is already playing: stop that game first`, true);
   try { await post('/api/play', { player: r.player, observation: r.observation, lookahead: r.lookahead }); } catch (e) { return log(e.message, true); }
-  run(Math.max(1, Math.min(500, +$('maxSteps').value || 100)));
+  watch(r.player);
+  run(maxSteps(), r.player);
 };
 $('step').onclick = () => run(1);
-$('stop').onclick = () => { running = false; inFlight?.abort(); };
+$('stop').onclick = () => { const r = runs.get(currentGame); if (r) { r.stop = true; r.abort?.abort(); } };
 
+watch(currentGame);
 resetCube(); updateHud(); requestAnimationFrame(frame);
 </script>
 </body>

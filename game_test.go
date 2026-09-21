@@ -45,3 +45,27 @@ func TestGameLifecycleAndLeaderboard(t *testing.T) {
 		t.Fatalf("leaderboard = %+v, want %+v", rows, want)
 	}
 }
+
+func TestHubRunsGamesSideBySide(t *testing.T) {
+	t.Chdir(t.TempDir())
+	h := newHub(nil)
+	for _, p := range []string{"model-a", "model-b"} {
+		if _, err := h.Play(PlayRequest{Player: p}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a, _ := h.get("model-a")
+	b, _ := h.get("model-b")
+	if err := a.Move([]string{"R", "U"}, "model-a"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.history) != 2 || len(b.history) != 0 || a.game == nil || b.game == nil {
+		t.Fatalf("games are not independent: a=%v b=%v", a.history, b.history)
+	}
+	if _, err := h.get("model-c"); err == nil {
+		t.Fatal("unregistered player got a session")
+	}
+	if got := h.games(); len(got) != 3 || got[0].Name != "" || !got[1].Open || got[1].Turns != 2 {
+		t.Fatalf("games = %+v", got)
+	}
+}

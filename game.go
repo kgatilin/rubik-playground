@@ -51,8 +51,8 @@ type PlayRequest struct {
 	Lookahead   bool   `json:"lookahead"`
 }
 
-// Play registers a player: the open game is dropped, the cube gets a fresh
-// random scramble and a new game starts.
+// Play registers a player on this session's cube: the open game is dropped, the
+// cube gets a fresh random scramble and a new game starts.
 func (s *Session) Play(in PlayRequest) (*Game, error) {
 	in.Player = strings.TrimSpace(in.Player)
 	in.Observation = cmp.Or(in.Observation, obsText)
