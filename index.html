@@ -93,7 +93,7 @@
     <button id="reset">Reset</button>
   </div>
 
-  <div id="games" title="cubes on this server: the sandbox and one per registered player"></div>
+  <div id="games" title="cubes on this server: the sandbox and one per registered game"></div>
 
   <details id="settings">
     <summary>Settings</summary>
@@ -359,7 +359,7 @@ const builtIn = by => /^(jev$|gemini:)/.test(by || '');
 function logEvent(e) {
   if (e.type === 'decision') decisionCard(e.record);
   else if (e.type === 'scramble') separator(`scramble · ${e.moves.length} moves`);
-  else if (e.type === 'game') { separator(e.game.outcome ? `game over · ${e.game.player} · ${e.game.outcome} · ${e.game.moves.length} face turns` : `game · ${e.game.player} · faces: ${e.game.observation}`); if (e.game.outcome) loadBoard(); }
+  else if (e.type === 'game') { separator(e.game.outcome ? `game #${e.game.session} over · ${e.game.player} · ${e.game.outcome} · ${e.game.moves.length} face turns` : `game #${e.game.session} · ${e.game.player} · faces: ${e.game.observation}`); if (e.game.outcome) loadBoard(); }
   else if (e.type === 'move' && !builtIn(e.by)) logMove(e);
   if (e.type === 'scramble') gameStart = lastAt = Date.parse(e.time);
   else if (e.type === 'decision') lastAt = Date.parse(e.record.time) + e.record.ms;
@@ -377,7 +377,7 @@ async function post(path, body = {}, signal) {
 const send = (path, body) => post(path, body).catch(e => log(e.message, true));
 
 // The page shows one cube of the server at a time: the sandbox ('') or a player's game.
-let currentGame = '', stream = null;
+let currentGame = '', stream = null, owners = new Map();   // game number -> its player
 try { currentGame = localStorage.getItem('game') || ''; } catch {}
 const api = (path, game = currentGame) => path + (game ? '?game=' + encodeURIComponent(game) : '');
 function onEvent(msg) {
@@ -411,9 +411,10 @@ function watch(game) {
 }
 function loadGames() {
   fetch('/api/games').then(r => r.json()).then(list => {
-    if (!list.some(g => g.name === currentGame)) return watch('');
-    $('games').innerHTML = list.map(g => `<button data-game="${esc(g.name)}" class="${g.name === currentGame ? 'on' : ''}">${esc(g.name || 'sandbox')}`
-      + `<span class="st">${g.solved && g.turns ? 'solved · ' : g.open ? '' : g.name ? 'over · ' : ''}${g.turns} turns${runs.has(g.name) ? ' · running' : ''}</span></button>`).join('');
+    if (!list.some(g => g.id === currentGame)) return watch('');
+    owners = new Map(list.map(g => [g.id, g.player]));
+    $('games').innerHTML = list.map(g => `<button data-game="${esc(g.id)}" class="${g.id === currentGame ? 'on' : ''}">${g.id ? `#${esc(g.id)} ${esc(g.player)}` : 'sandbox'}`
+      + `<span class="st">${g.solved && g.turns ? 'solved · ' : g.open ? '' : g.id ? 'over · ' : ''}${g.turns} turns${runs.has(g.id) ? ' · running' : ''}</span></button>`).join('');
   }).catch(() => {});
 }
 $('games').onclick = e => { const b = e.target.closest('button'); if (b && b.dataset.game !== currentGame) watch(b.dataset.game); };
@@ -457,7 +458,7 @@ $('player').onchange = () => { showThinking(); try { localStorage.setItem('playe
 const playerId = () => $('player').value + ($('player').value.startsWith('gemini:') && $('thinking').value ? '@' + $('thinking').value : '');
 
 // In a player's game the player is the game's owner, whatever the selector shows now.
-const stepRequest = (game = currentGame) => ({ player: game || playerId(), options: $('moves').value.trim().split(/[\s,]+/).filter(Boolean),
+const stepRequest = (game = currentGame) => ({ player: owners.get(game) || playerId(), options: $('moves').value.trim().split(/[\s,]+/).filter(Boolean),
   instructions: $('instr').value, sample: $('sample').checked, no_undo: $('noUndo').checked,
   shuffle: $('shuffle').checked, lookahead: $('lookahead').checked,
   observation: $('observation').value });
@@ -484,17 +485,17 @@ async function run(limit, game = currentGame) {
       const turns = last.step + last.moves.length - 1;
       say(last.solved ? `<b>solved</b> in ${turns} face turns, ${done} decisions` : `stopped after ${done} decisions, ${turns} face turns: ${last.matched_after}/54 stickers in place`);
     }
-  } catch (e) { if (e.name === 'AbortError') say('stopped: the decision in progress was dropped'); else say(esc(`${game || 'sandbox'}: ${e.message}`), true); }
+  } catch (e) { if (e.name === 'AbortError') say('stopped: the decision in progress was dropped'); else say(esc(e.message), true); }
   runs.delete(game); syncButtons(); loadGames();
 }
 const maxSteps = () => Math.max(1, Math.min(500, +$('maxSteps').value || 100));
 $('run').onclick = () => run(maxSteps());
 $('play').onclick = async () => {
-  const r = stepRequest();
-  if (runs.has(r.player)) return log(`${r.player} is already playing: stop that game first`, true);
-  try { await post('/api/play', { player: r.player, observation: r.observation, lookahead: r.lookahead }); } catch (e) { return log(e.message, true); }
-  watch(r.player);
-  run(maxSteps(), r.player);
+  const r = stepRequest(''), game = await post('/api/play', { player: r.player, observation: r.observation, lookahead: r.lookahead }).catch(e => log(e.message, true));
+  if (!game) return;
+  owners.set(game.session, game.player);
+  watch(game.session);
+  run(maxSteps(), game.session);
 };
 $('step').onclick = () => run(1);
 $('stop').onclick = () => { const r = runs.get(currentGame); if (r) { r.stop = true; r.abort?.abort(); } };

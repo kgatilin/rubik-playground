@@ -200,16 +200,15 @@ func call(addr, path string, in, out any) error {
 // runOnServer plays on the served cube: the page animates every move.
 func runOnServer(addr string, req StepRequest, scramble []string, maxMoves int, game bool) error {
 	session := ""
-	if game {
-		session = gameQuery(req.Player)
-	}
 	call := func(path string, in, out any) error { return call(addr, path, in, out) }
 	if game {
 		in := PlayRequest{Player: req.Player, Observation: req.Observation, Lookahead: req.Lookahead}
-		if err := call("/api/play", in, &Game{}); err != nil {
+		var g Game
+		if err := call("/api/play", in, &g); err != nil {
 			return err
 		}
-		fmt.Printf("leaderboard game for %s\n", req.Player)
+		session = gameQuery(g.Session)
+		fmt.Printf("leaderboard game %s for %s\n", g.Session, req.Player)
 	} else if len(scramble) > 0 {
 		var applied []string
 		if err := call("/api/reset", struct{}{}, &struct{}{}); err != nil {
@@ -236,17 +235,28 @@ func runOnServer(addr string, req StepRequest, scramble []string, maxMoves int, 
 	return nil
 }
 
-// gameQuery picks a player's session on the server; no name is the sandbox cube.
-func gameQuery(player string) string {
-	if player == "" {
+// gameQuery picks a game session on the server by its number; none is the sandbox cube.
+func gameQuery(game string) string {
+	if game == "" {
 		return ""
 	}
-	return "?game=" + url.QueryEscape(player)
+	return "?game=" + url.QueryEscape(game)
 }
 
+// playPrompt is what a registered player is told once, before the first observation.
+const playPrompt = `You are playing game %[1]s as %[2]s. Goal: solve the cube in as few face turns as possible; the game ends unsolved at %[3]d face turns.
+
+Commands, the only things that touch the cube:
+  jev-playground state --game %[1]s%[4]s            look at the cube, free, any number of times
+  jev-playground move <actions> --game %[1]s%[4]s   turn faces, e.g. move R U R' --game %[1]s; any number of actions per call, each costs one face turn
+Actions: U D L R F B turn that face 90° clockwise as seen from outside the face, X' is counter-clockwise, X2 is 180°. There are no whole-cube rotations: centres never move.
+No scripts, loops, solvers or simulation of the cube in code: the cube is simulated only in your head. Reading the scramble, the server's API or its logs forfeits the game.
+
+`
+
 // servedCube fetches a session of a running `serve` and rebuilds its cube.
-func servedCube(addr, player string) (*Cube, []string, error) {
-	resp, err := http.Get("http://" + addr + "/api/state" + gameQuery(player))
+func servedCube(addr, game string) (*Cube, []string, error) {
+	resp, err := http.Get("http://" + addr + "/api/state" + gameQuery(game))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -266,11 +276,11 @@ func servedCube(addr, player string) (*Cube, []string, error) {
 
 // playCmds are for a player other than Jev: read the served cube, think, move.
 func playCmds() []*cobra.Command {
-	var addr, player, imagePath string
+	var addr, player, game, imagePath string
 	var pieces bool
 	// observe prints the observation; with --image the faces go to a PNG instead of the text rows.
 	observe := func() error {
-		cube, history, err := servedCube(addr, player)
+		cube, history, err := servedCube(addr, game)
 		if err != nil {
 			return err
 		}
@@ -303,7 +313,7 @@ func playCmds() []*cobra.Command {
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			moves := strings.Fields(strings.Join(args, " "))
-			if err := call(addr, "/api/move"+gameQuery(player), map[string]any{"moves": moves, "by": cmp.Or(player, "cli")}, &struct{}{}); err != nil {
+			if err := call(addr, "/api/move"+gameQuery(game), map[string]any{"moves": moves}, &struct{}{}); err != nil {
 				return err
 			}
 			return observe()
@@ -320,15 +330,26 @@ func playCmds() []*cobra.Command {
 			} else if pieces {
 				in.Observation = obsPieces
 			}
-			if err := call(addr, "/api/play", in, &Game{}); err != nil {
+			var g Game
+			if err := call(addr, "/api/play", in, &g); err != nil {
 				return err
 			}
-			fmt.Printf("Game started for %s. Make moves with: move <actions> --as %s\n\n", player, player)
+			game = g.Session
+			view := ""
+			if pieces {
+				view = " --pieces"
+			} else if imagePath != "" {
+				view = " --image " + imagePath
+			}
+			fmt.Printf(playPrompt, g.Session, g.Player, defaultLimit, view)
 			return observe()
 		},
 	}
+	play.Flags().StringVar(&player, "as", "", "model name the result is recorded under")
+	for _, c := range []*cobra.Command{state, move} {
+		c.Flags().StringVar(&game, "game", "", "game number printed by play; without it, the sandbox cube")
+	}
 	for _, c := range []*cobra.Command{state, move, play} {
-		c.Flags().StringVar(&player, "as", "", "player name: picks the player's own game; without it, the sandbox cube")
 		c.Flags().StringVar(&addr, "ui", "localhost:7810", "address of the running serve")
 		c.Flags().BoolVar(&pieces, "pieces", false, "list corners and edges by place instead of the face rows")
 		c.Flags().StringVar(&imagePath, "image", "", "write the faces as a PNG to this file instead of printing them as text")

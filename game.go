@@ -24,7 +24,8 @@ const (
 // dropped. Closed games are the lines of runs/games.jsonl; the leaderboard is
 // computed from that file.
 type Game struct {
-	ID          string    `json:"id"` // the run id, so decisions are in runs/<id>.jsonl
+	ID          string    `json:"id"`      // the run id, so decisions are in runs/<id>.jsonl
+	Session     string    `json:"session"` // short number of the game on its serve: what state and move are pointed at
 	Player      string    `json:"player"`
 	Observation string    `json:"observation"`
 	Lookahead   bool      `json:"lookahead,omitempty"`
@@ -68,7 +69,7 @@ func (s *Session) Play(in PlayRequest) (*Game, error) {
 	s.scramble, s.history, s.run, s.gemini = nil, nil, newRunID("game"), map[string]*Gemini{}
 	s.publish(event{Type: "sync"})
 	s.scramble = randomScramble(gameScramble)
-	s.game = &Game{ID: s.run, Player: in.Player, Observation: in.Observation,
+	s.game = &Game{ID: s.run, Session: s.id, Player: in.Player, Observation: in.Observation,
 		Lookahead: in.Lookahead && in.Player == "jev", // only Jev is shown lookahead
 		Scramble:  slices.Clone(s.scramble), Started: time.Now().UTC()}
 	s.publish(event{Type: "scramble", Moves: s.scramble})

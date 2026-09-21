@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,7 +22,8 @@ const defaultLimit = 100 // face turns per game
 // The page is a view over its event stream; page buttons and `run --ui`
 // change it through the same endpoints.
 type Session struct {
-	name     string // "" is the sandbox cube; a game session is named after its player
+	id       string // "" is the sandbox cube; a game session has a short number
+	name     string // the player the session was registered for
 	mu       sync.Mutex
 	stepMu   sync.Mutex // one built-in decision at a time; s.mu is not held while a model thinks
 	jev      *Jev
@@ -66,49 +69,51 @@ func players() []string {
 	return out
 }
 
-// Hub holds the cubes of one serve: the sandbox and one session per registered
-// player, so games run side by side. A session is picked with ?game=<player>.
+// Hub holds the cubes of one serve: the sandbox and one session per registration,
+// so games run side by side. Registration hands out the session's short id, and
+// ?game=<id> picks it.
 type Hub struct {
 	mu       sync.Mutex
 	jev      *Jev
 	sessions map[string]*Session
-	order    []string // registration order, sandbox first
+	order    []string // session ids in registration order, sandbox first
 }
 
 func newHub(jev *Jev) *Hub {
 	return &Hub{jev: jev, sessions: map[string]*Session{"": newSession(jev)}, order: []string{""}}
 }
 
-func (h *Hub) get(name string) (*Session, error) {
+func (h *Hub) get(id string) (*Session, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if s := h.sessions[name]; s != nil {
+	if s := h.sessions[id]; s != nil {
 		return s, nil
 	}
-	return nil, fmt.Errorf("no game for %q: register with play --as %s", name, name)
+	return nil, fmt.Errorf("no game %q: register with play --as <name> and use the game number it prints", id)
 }
 
-// Play registers the player in a session of its own; registering again restarts it there.
+// Play registers the player in a new session and starts its game.
 func (h *Hub) Play(in PlayRequest) (*Game, error) {
 	in.Player = strings.TrimSpace(in.Player)
 	if in.Player == "" {
 		return nil, errors.New("a game needs a player name")
 	}
-	h.mu.Lock()
-	s := h.sessions[in.Player]
-	if s == nil {
-		s = newSession(h.jev)
-		s.name = in.Player
-		h.sessions[in.Player] = s
-		h.order = append(h.order, in.Player)
+	if err := validObservation(in.Observation); err != nil {
+		return nil, err
 	}
+	h.mu.Lock()
+	s := newSession(h.jev)
+	s.id, s.name = strconv.Itoa(len(h.order)), in.Player
+	h.sessions[s.id] = s
+	h.order = append(h.order, s.id)
 	h.mu.Unlock()
 	return s.Play(in)
 }
 
 // GameInfo is one line of the page's game switcher.
 type GameInfo struct {
-	Name    string `json:"name"`
+	ID      string `json:"id"`
+	Player  string `json:"player"`
 	Turns   int    `json:"turns"`
 	Open    bool   `json:"open"` // a registered game is being played
 	Solved  bool   `json:"solved"`
@@ -119,13 +124,13 @@ func (h *Hub) games() []GameInfo {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	out := make([]GameInfo, 0, len(h.order))
-	for _, name := range h.order {
-		s := h.sessions[name]
+	for _, id := range h.order {
+		s := h.sessions[id]
 		s.mu.Lock()
 		cube := NewCube()
 		cube.ApplyAll(s.scramble)
 		cube.ApplyAll(s.history)
-		out = append(out, GameInfo{Name: name, Turns: len(s.history), Open: s.game != nil, Solved: cube.Solved(), Matched: cube.Matched()})
+		out = append(out, GameInfo{ID: id, Player: s.name, Turns: len(s.history), Open: s.game != nil, Solved: cube.Solved(), Matched: cube.Matched()})
 		s.mu.Unlock()
 	}
 	return out
@@ -189,6 +194,7 @@ func (s *Session) Move(moves []string, by string) error {
 			return fmt.Errorf("unknown move %q", m)
 		}
 	}
+	by = cmp.Or(by, s.name, "cli")
 	at := time.Now().UTC()
 	for _, m := range moves {
 		if len(s.history) >= defaultLimit {

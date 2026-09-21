@@ -12,9 +12,9 @@ implemented yet. Everything else matches the code.
 ## The game
 
 - A cube is solved + scramble + the moves made since. One `serve` holds several (`Hub`):
-  the sandbox cube, and one session per registered player, so games run side by side.
-  `?game=<player>` on the API and `--as <player>` on the CLI pick a session; without them
-  it is the sandbox.
+  the sandbox cube, and one session per registration, so games run side by side. A session
+  has a short number (1, 2, 3… per `serve` run), handed out by `play`; `?game=<n>` on the
+  API and `--game <n>` on the CLI pick it; without them it is the sandbox.
 - Goal: solve it in the fewest face turns. Limit: 100 face turns per game
   (`defaultLimit`); the server refuses moves past it and a decision's move list is cut
   at it. Reaching the limit unsolved is a DNF. `run --max` and the page's "decisions
@@ -30,11 +30,10 @@ implemented yet. Everything else matches the code.
 
 A game is one registered attempt (`game.go`). Registration (`play --as <model>`, the page's
 Play button, `run --ui --game`) drops the open game, gives the cube a fresh random 20-move
-scramble and opens a game under that name, in the player's own session; other players'
-games are not touched. One open game per name: two parallel runs of one model need two
-names. It closes by
-itself: `solved`, `dnf` at the turn limit, or `abandoned` when the same name registers
-again or its cube is scrambled or reset. A closed game is one line of `runs/games.jsonl`: player, category,
+scramble and opens a game under that name in a new session; other games are not touched,
+and one name can have several games going at once. `play` prints the player prompt (game
+number, the two commands, the rules) and the first observation. It closes by
+itself: `solved`, `dnf` at the turn limit, or `abandoned` when its cube is scrambled or reset. A closed game is one line of `runs/games.jsonl`: player, category,
 scramble, every move in order, decisions (built-in players), times, outcome.
 
 The leaderboard (`leaderboard` command, `/api/leaderboard`, the page panel) is computed
@@ -47,8 +46,9 @@ a step by another built-in player is refused while a game is open.
 Not covered: the name is whatever the player declares; a forfeit (reading the scramble) is
 not detected; every move made while a game is open counts towards it, including moves from
 the page; scrambles are random per attempt, so compare players by the mean over many games;
-a game open when `serve` stops is not recorded; sessions live in memory until then, finished
-ones included.
+a game open when `serve` stops is not recorded, so a game a player walked away from stays
+open and unrecorded unless its tab is reset; sessions live in memory until `serve` stops,
+finished ones included.
 
 ## Players
 
@@ -72,9 +72,8 @@ turn accounting and the same log:
 ### Rules for external (CLI) players
 
 - Allowed commands: `jev-playground play --as <name>` (register: fresh scramble, the
-  result goes to the leaderboard under that name), `jev-playground state --as <name>`,
-  `jev-playground move <actions> --as <name>`; `--as` is what points them at the player's
-  own cube; each takes `--pieces` or `--image <file>`.
+  result goes to the leaderboard under that name), `jev-playground state --game <n>`,
+  `jev-playground move <actions> --game <n>`, with the game number `play` printed; each takes `--pieces` or `--image <file>`.
   `jev-playground actions` **(proposed)**. Nothing else touches the cube.
 - A leaderboard attempt starts with `play` and is played in one observation mode, the one
   given to `play`. Calling `play` again drops the attempt as `abandoned`.
@@ -200,7 +199,7 @@ Stated so results are read correctly; none of it is compensated unless listed.
   summary, the observation the player saw, the raw record), one line per `move` call of a
   CLI agent or click by hand (turn numbers, the moves, the pause before the call, the time
   since the game started; events carry a server `time`, and the moves of one call share it), separators for game start and end. Above the log: the game tabs
-  (sandbox and every player's session, polled from `/api/games`; a tab switches the event
+  (sandbox and every game session as `#n player`, polled from `/api/games`; a tab switches the event
   stream, so the cube and the log are that game's), the player,
   thinking level and faces (observation) selectors, Play (register a leaderboard game and
   run), Run (keep playing the current cube), Step, Stop, and the Leaderboard panel. The
