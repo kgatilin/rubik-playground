@@ -27,7 +27,7 @@ var allMoves = strings.Fields("U U' U2 D D' D2 L L' L2 R R' R2 F F' F2 B B' B2")
 // StepRequest is one decision: the cube is NewCube + Scramble + History.
 // Both the web page and the CLI go through Decide with this.
 type StepRequest struct {
-	Player       string   `json:"player"` // "jev" (default) or "gemini:<model>"
+	Player       string   `json:"player"` // "jev" (default) or "gemini:<model>[@<thinking level>]"
 	Limit        int      `json:"limit"`  // face-turn limit of the game
 	Run          string   `json:"run"`
 	Scramble     []string `json:"scramble"`

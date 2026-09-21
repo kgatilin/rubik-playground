@@ -28,7 +28,8 @@ turn accounting and the same log:
 
 - **built-in**: the server drives the model (`/api/step`, `run`).
   - Jev: one stateless call per decision, the action catalog as `choice` criteria.
-  - Gemini on Vertex AI (`gemini.go`, player id `gemini:<model>`): one conversation per
+  - Gemini on Vertex AI (`gemini.go`, player id `gemini:<model>[@minimal|low|medium|high]`,
+    the suffix is the thinking level, none = the model's default): one conversation per
     game with a single tool, `move(actions)`. The tool response is the next observation,
     rendered when the next decision starts, so moves made by others in between are seen.
     The model's turns go back into the conversation untouched, so thought signatures

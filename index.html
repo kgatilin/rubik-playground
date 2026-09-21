@@ -58,7 +58,8 @@
 
   <section>
     <h2>Player</h2>
-    <div class="row"><select id="player"></select><label>built-in player; CLI agents use <b>state</b> / <b>move</b></label></div>
+    <div class="row"><select id="player"></select>
+      <select id="thinking" title="Gemini thinking level"><option value="">thinking: default</option><option>minimal</option><option>low</option><option>medium</option><option>high</option></select><label>built-in player; CLI agents use <b>state</b> / <b>move</b></label></div>
     <label style="margin-top:8px">Moves offered per step</label>
     <input id="moves" type="text" value="U U' U2 D D' D2 L L' L2 R R' R2 F F' F2 B B' B2">
     <label style="margin-top:8px">Instructions (Jev)</label>
@@ -303,10 +304,13 @@ $('scramble').onclick = () => send('/api/scramble', { len: +$('scrambleN').value
 fetch('/api/players').then(r => r.json()).then(list => {
   $('player').innerHTML = list.map(p => `<option>${p}</option>`).join('');
   try { const saved = localStorage.getItem('player'); if (list.includes(saved)) $('player').value = saved; } catch {}
+  showThinking();
 });
-$('player').onchange = () => { try { localStorage.setItem('player', $('player').value); } catch {} };
+const showThinking = () => { $('thinking').style.display = $('player').value.startsWith('gemini:') ? '' : 'none'; };
+$('player').onchange = () => { showThinking(); try { localStorage.setItem('player', $('player').value); } catch {} };
+const playerId = () => $('player').value + ($('player').value.startsWith('gemini:') && $('thinking').value ? '@' + $('thinking').value : '');
 
-const stepRequest = () => ({ player: $('player').value, options: $('moves').value.trim().split(/[\s,]+/).filter(Boolean),
+const stepRequest = () => ({ player: playerId(), options: $('moves').value.trim().split(/[\s,]+/).filter(Boolean),
   instructions: $('instr').value, sample: $('sample').checked, no_undo: $('noUndo').checked,
   shuffle: $('shuffle').checked, lookahead: $('lookahead').checked });
 

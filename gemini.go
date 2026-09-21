@@ -20,11 +20,20 @@ You act only by calling the tool move(actions). Each action is one face turn: U 
 type Gemini struct {
 	client   *genai.Client
 	model    string
+	level    genai.ThinkingLevel // empty: the model's default
 	contents []*genai.Content
 	pending  *genai.FunctionCall // answered with the observation at the start of the next decision
 }
 
-func newGemini(model string) (*Gemini, error) {
+// newGemini takes "<model>" or "<model>@<thinking level>" (minimal, low, medium, high).
+func newGemini(spec string) (*Gemini, error) {
+	model, lvl, _ := strings.Cut(spec, "@")
+	level := genai.ThinkingLevel(strings.ToUpper(lvl))
+	switch level {
+	case "", genai.ThinkingLevelMinimal, genai.ThinkingLevelLow, genai.ThinkingLevelMedium, genai.ThinkingLevelHigh:
+	default:
+		return nil, fmt.Errorf("unknown thinking level %q: use minimal, low, medium or high", lvl)
+	}
 	project, location := os.Getenv("GOOGLE_CLOUD_PROJECT"), os.Getenv("GOOGLE_CLOUD_LOCATION")
 	if project == "" || location == "" {
 		return nil, fmt.Errorf("GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION are not set (env or .env)")
@@ -34,13 +43,13 @@ func newGemini(model string) (*Gemini, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Gemini{client: client, model: model}, nil
+	return &Gemini{client: client, model: model, level: level}, nil
 }
 
 func (g *Gemini) config(options []string) *genai.GenerateContentConfig {
 	return &genai.GenerateContentConfig{
 		SystemInstruction: genai.NewContentFromText(geminiRules, genai.RoleUser),
-		ThinkingConfig:    &genai.ThinkingConfig{IncludeThoughts: true},
+		ThinkingConfig:    &genai.ThinkingConfig{IncludeThoughts: true, ThinkingLevel: g.level},
 		ToolConfig: &genai.ToolConfig{FunctionCallingConfig: &genai.FunctionCallingConfig{
 			Mode: genai.FunctionCallingConfigModeAny}},
 		Tools: []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{{

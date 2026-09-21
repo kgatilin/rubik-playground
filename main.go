@@ -163,7 +163,7 @@ func runCmd() *cobra.Command {
 	f.StringVar(&scramble, "scramble", "", "scramble moves, e.g. \"R U F'\" (default: random)")
 	f.IntVar(&scrambleLen, "scramble-len", 3, "length of the random scramble")
 	f.IntVar(&maxMoves, "max", 100, "decision limit (the game itself ends at 100 face turns)")
-	f.StringVar(&req.Player, "player", "jev", "built-in player: jev or gemini:<model>")
+	f.StringVar(&req.Player, "player", "jev", "built-in player: jev or gemini:<model>[@minimal|low|medium|high]")
 	f.StringVar(&moves, "moves", strings.Join(allMoves, " "), "moves offered per step")
 	f.StringVar(&req.Instructions, "instructions", defaultInstructions, "choice question instructions")
 	f.BoolVar(&req.Sample, "sample", false, "draw the move from the probabilities")
