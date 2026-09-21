@@ -63,7 +63,7 @@ func (g *Gemini) config(options []string) *genai.GenerateContentConfig {
 	}
 }
 
-func (g *Gemini) Decide(req StepRequest) (*StepRecord, error) {
+func (g *Gemini) Decide(ctx context.Context, req StepRequest) (*StepRecord, error) {
 	cube, offered, err := prepareStep(req)
 	if err != nil {
 		return nil, err
@@ -87,7 +87,7 @@ func (g *Gemini) Decide(req StepRequest) (*StepRecord, error) {
 	}
 	g.contents = append(g.contents, genai.NewContentFromParts(parts, genai.RoleUser))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	t0 := time.Now()
 	resp, err := g.client.Models.GenerateContent(ctx, g.model, g.contents, g.config(offered))

@@ -114,7 +114,7 @@
     </div>
   </details>
 
-  <details id="board">
+  <details id="board" open>
     <summary>Leaderboard</summary>
     <div class="body"><table id="boardRows"></table></div>
   </details>
@@ -352,8 +352,8 @@ function logEvent(e) {
 // ---------- server session ----------
 // The cube lives on the server. Buttons post commands; every change (from this page,
 // another page or the CLI) comes back on the event stream and is drawn here.
-async function post(path, body = {}) {
-  const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+async function post(path, body = {}, signal) {
+  const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
   const text = await res.text();
   if (!res.ok) throw new Error(text.trim() || `${path}: ${res.status}`);
   return JSON.parse(text);
@@ -396,10 +396,11 @@ $('reset').onclick = () => send('/api/reset');
 $('scramble').onclick = () => send('/api/scramble', { len: +$('scrambleN').value || 20 });
 
 // ---------- leaderboard ----------
+const secs = t => t ? (t >= 60 ? `${Math.floor(t / 60)}m${String(Math.round(t % 60)).padStart(2, '0')}s` : `${Math.round(t)}s`) : '–';
 function loadBoard() {
   fetch('/api/leaderboard').then(r => r.json()).then(rows => {
-    $('boardRows').innerHTML = '<tr><th>player</th><th>faces</th><th>games</th><th>solved</th><th>dnf</th><th>dropped</th><th>best</th><th>mean</th></tr>'
-      + rows.map(r => `<tr><td>${esc(r.player)}</td><td>${esc(r.category)}</td><td>${r.attempts}</td><td>${r.solved}</td><td>${r.dnf}</td><td>${r.abandoned}</td><td>${r.best || '–'}</td><td>${r.mean ? r.mean.toFixed(1) : '–'}</td></tr>`).join('');
+    $('boardRows').innerHTML = '<tr><th>player</th><th>faces</th><th>games</th><th>solved</th><th>dnf</th><th>dropped</th><th>best</th><th>time</th><th>mean</th><th>time</th></tr>'
+      + rows.map(r => `<tr><td>${esc(r.player)}</td><td>${esc(r.category)}</td><td>${r.attempts}</td><td>${r.solved}</td><td>${r.dnf}</td><td>${r.abandoned}</td><td>${r.best || '–'}</td><td>${secs(r.best_secs)}</td><td>${r.mean ? r.mean.toFixed(1) : '–'}</td><td>${secs(r.mean_secs)}</td></tr>`).join('');
   }).catch(() => {});
 }
 loadBoard();
@@ -424,21 +425,22 @@ const stepRequest = () => ({ player: playerId(), options: $('moves').value.trim(
   shuffle: $('shuffle').checked, lookahead: $('lookahead').checked,
   observation: $('observation').value });
 
-let running = false;
+let running = false, inFlight = null;   // Stop aborts the decision being waited for; the server drops it
 async function run(limit) {
   if (running) return;
   running = true; $('play').disabled = $('run').disabled = $('step').disabled = true; $('stop').disabled = false;
   let done = 0, last = null;
   try {
     for (; done < limit && running; done++) {
-      last = await post('/api/step', stepRequest());
+      inFlight = new AbortController();
+      last = await post('/api/step', stepRequest(), inFlight.signal);
       if (last.solved) { done++; break; }
     }
     if (limit > 1 && last) {
       const turns = last.step + last.moves.length - 1;
       note(last.solved ? `<b>solved</b> in ${turns} face turns, ${done} decisions` : `stopped after ${done} decisions, ${turns} face turns: ${last.matched_after}/54 stickers in place`);
     }
-  } catch (e) { log(e.message, true); }
+  } catch (e) { if (e.name === 'AbortError') note(`stopped: the decision in progress was dropped`); else log(e.message, true); }
   running = false; $('play').disabled = $('run').disabled = $('step').disabled = false; $('stop').disabled = true;
 }
 $('run').onclick = () => run(Math.max(1, Math.min(500, +$('maxSteps').value || 100)));
@@ -449,7 +451,7 @@ $('play').onclick = async () => {
   run(Math.max(1, Math.min(500, +$('maxSteps').value || 100)));
 };
 $('step').onclick = () => run(1);
-$('stop').onclick = () => { running = false; };
+$('stop').onclick = () => { running = false; inFlight?.abort(); };
 
 resetCube(); updateHud(); requestAnimationFrame(frame);
 </script>

@@ -25,7 +25,7 @@ func TestGameLifecycleAndLeaderboard(t *testing.T) {
 	if s.game != nil {
 		t.Fatal("game still open after the cube was solved")
 	}
-	if _, err := s.Step(StepRequest{Player: "jev"}); err == nil {
+	if _, err := s.Step(t.Context(), StepRequest{Player: "jev"}); err == nil {
 		t.Fatal("step on a solved cube should fail")
 	}
 
@@ -34,6 +34,12 @@ func TestGameLifecycleAndLeaderboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := BoardRow{Player: "model-a", Category: "text", Attempts: 2, Solved: 1, Abandoned: 1, Best: gameScramble, Mean: gameScramble}
+	if len(rows) == 1 {
+		if rows[0].BestSecs <= 0 || rows[0].MeanSecs != rows[0].BestSecs {
+			t.Fatalf("times not recorded: %+v", rows[0])
+		}
+		rows[0].BestSecs, rows[0].MeanSecs = 0, 0
+	}
 	if len(rows) != 1 || rows[0] != want {
 		t.Fatalf("leaderboard = %+v, want %+v", rows, want)
 	}

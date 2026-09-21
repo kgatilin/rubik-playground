@@ -31,7 +31,8 @@ scramble, every move in order, decisions (built-in players), times, outcome.
 
 The leaderboard (`leaderboard` command, `/api/leaderboard`, the page panel) is computed
 from that file on every read: per player and category, games, solved, DNF, abandoned, best
-and mean face turns of solved games. Category is the observation mode, plus `+lookahead`
+and mean face turns of solved games, with the duration of the best game and the mean
+duration (registration to last move). Category is the observation mode, plus `+lookahead`
 for Jev. A built-in player's `observation` and `lookahead` are fixed at registration, and
 a step by another built-in player is refused while a game is open.
 
@@ -180,6 +181,9 @@ Stated so results are read correctly; none of it is compensated unless listed.
   summary, the observation the player saw, the raw record), grouped lines for moves by
   CLI agents or by hand. The server replays the current game's events on connect
   (`sync.log`), so the log survives a reload. `#open` in the URL expands every card.
+
+The page's Stop aborts the `/api/step` request; the request context reaches the model call
+(`Decider.Decide(ctx, …)`), so the decision in progress is cancelled and nothing is applied.
 
 Build and check: `go vet ./... && go test ./... && go build -o jev-playground .`
 After changing `index.html` or Go code, restart `serve` (the page is embedded).

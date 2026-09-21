@@ -143,7 +143,7 @@ func runCmd() *cobra.Command {
 			req.Run = newRunID("cli")
 			fmt.Printf("run %s  scramble: %s\n", req.Run, strings.Join(req.Scramble, " "))
 			for range maxMoves {
-				rec, err := player.Decide(req)
+				rec, err := player.Decide(cmd.Context(), req)
 				if err != nil {
 					return err
 				}

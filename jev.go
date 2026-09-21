@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -91,7 +92,7 @@ func (o orderedCriteria) MarshalJSON() ([]byte, error) {
 
 // Decider is a built-in player: one decision on the cube described by the request.
 type Decider interface {
-	Decide(StepRequest) (*StepRecord, error)
+	Decide(context.Context, StepRequest) (*StepRecord, error)
 }
 
 // prepareStep rebuilds the cube and the list of moves offered for this decision.
@@ -146,7 +147,7 @@ func finishStep(rec *StepRecord, cube *Cube) error {
 }
 
 // Decide asks Jev for the next move, appends the record to the run log and returns it.
-func (j *Jev) Decide(req StepRequest) (*StepRecord, error) {
+func (j *Jev) Decide(ctx context.Context, req StepRequest) (*StepRecord, error) {
 	if req.Observation == obsImage {
 		return nil, fmt.Errorf("jev takes a text state only: the image observation is for players that accept pictures")
 	}
@@ -175,7 +176,7 @@ func (j *Jev) Decide(req StepRequest) (*StepRecord, error) {
 		"questions": map[string]any{"next_move": map[string]any{
 			"type": "choice", "instructions": req.Instructions, "criteria": criteria}},
 	})
-	hreq, _ := http.NewRequest(http.MethodPost, jevURL, bytes.NewReader(body))
+	hreq, _ := http.NewRequestWithContext(ctx, http.MethodPost, jevURL, bytes.NewReader(body))
 	hreq.Header.Set("Authorization", "Bearer "+j.Token)
 	hreq.Header.Set("Content-Type", "application/json")
 	t0 := time.Now()

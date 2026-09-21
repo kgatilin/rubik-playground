@@ -115,8 +115,10 @@ type BoardRow struct {
 	Solved    int     `json:"solved"`
 	DNF       int     `json:"dnf"`
 	Abandoned int     `json:"abandoned"`
-	Best      int     `json:"best,omitempty"` // fewest face turns of a solved game
-	Mean      float64 `json:"mean,omitempty"` // face turns over solved games
+	Best      int     `json:"best,omitempty"`      // fewest face turns of a solved game
+	Mean      float64 `json:"mean,omitempty"`      // face turns over solved games
+	BestSecs  float64 `json:"best_secs,omitempty"` // duration of the best game, registration to last move
+	MeanSecs  float64 `json:"mean_secs,omitempty"` // duration over solved games
 }
 
 // leaderboard aggregates the games file: solvers first by best result, then by mean.
@@ -145,11 +147,12 @@ func leaderboard() ([]BoardRow, error) {
 		r.Attempts++
 		switch g.Outcome {
 		case "solved":
-			n := len(g.Moves)
+			n, secs := len(g.Moves), g.Ended.Sub(g.Started).Seconds()
 			r.Mean = (r.Mean*float64(r.Solved) + float64(n)) / float64(r.Solved+1)
+			r.MeanSecs = (r.MeanSecs*float64(r.Solved) + secs) / float64(r.Solved+1)
 			r.Solved++
-			if r.Best == 0 || n < r.Best {
-				r.Best = n
+			if r.Best == 0 || n < r.Best || n == r.Best && secs < r.BestSecs {
+				r.Best, r.BestSecs = n, secs
 			}
 		case "dnf":
 			r.DNF++
@@ -169,12 +172,14 @@ func leaderboard() ([]BoardRow, error) {
 }
 
 func printBoard(rows []BoardRow) {
-	fmt.Printf("%-40s %-16s %8s %6s %4s %9s %5s %6s\n", "player", "category", "attempts", "solved", "dnf", "abandoned", "best", "mean")
+	fmt.Printf("%-40s %-16s %8s %6s %4s %9s %5s %9s %6s %9s\n", "player", "category", "attempts", "solved", "dnf", "abandoned", "best", "best time", "mean", "mean time")
 	for _, r := range rows {
-		best, mean := "-", "-"
+		best, mean, bestTime, meanTime := "-", "-", "-", "-"
 		if r.Solved > 0 {
 			best, mean = fmt.Sprint(r.Best), fmt.Sprintf("%.1f", r.Mean)
+			bestTime = (time.Duration(r.BestSecs) * time.Second).String()
+			meanTime = (time.Duration(r.MeanSecs) * time.Second).String()
 		}
-		fmt.Printf("%-40s %-16s %8d %6d %4d %9d %5s %6s\n", r.Player, r.Category, r.Attempts, r.Solved, r.DNF, r.Abandoned, best, mean)
+		fmt.Printf("%-40s %-16s %8d %6d %4d %9d %5s %9s %6s %9s\n", r.Player, r.Category, r.Attempts, r.Solved, r.DNF, r.Abandoned, best, bestTime, mean, meanTime)
 	}
 }

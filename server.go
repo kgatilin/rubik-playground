@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -141,7 +142,8 @@ func (s *Session) decider(player string) (Decider, error) {
 }
 
 // Step asks a built-in player for one decision on the current cube and applies it.
-func (s *Session) Step(req StepRequest) (*StepRecord, error) {
+// Cancelling ctx (the page's Stop closes the request) abandons the model call.
+func (s *Session) Step(ctx context.Context, req StepRequest) (*StepRecord, error) {
 	s.stepMu.Lock()
 	defer s.stepMu.Unlock()
 
@@ -171,7 +173,7 @@ func (s *Session) Step(req StepRequest) (*StepRecord, error) {
 		return nil, errLimit
 	}
 
-	rec, err := d.Decide(req)
+	rec, err := d.Decide(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +220,7 @@ func (s *Session) events(w http.ResponseWriter, r *http.Request) {
 }
 
 // post wraps a JSON command handler: decode the body, run it, encode the result.
-func post[T any](fn func(T) (any, error)) http.HandlerFunc {
+func post[T any](fn func(context.Context, T) (any, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var in T
 		if r.Method != http.MethodPost {
@@ -229,7 +231,7 @@ func post[T any](fn func(T) (any, error)) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		out, err := fn(in)
+		out, err := fn(r.Context(), in)
 		if err != nil {
 			code := http.StatusBadGateway
 			if errors.Is(err, errSolved) || errors.Is(err, errLimit) {
@@ -269,10 +271,10 @@ func (s *Session) routes(mux *http.ServeMux) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(rows)
 	})
-	mux.HandleFunc("/api/play", post(func(in PlayRequest) (any, error) { return s.Play(in) }))
-	mux.HandleFunc("/api/reset", post(func(struct{}) (any, error) { s.Reset(); return struct{}{}, nil }))
-	mux.HandleFunc("/api/move", post(func(in struct{ Move, By string }) (any, error) { return struct{}{}, s.Move(in.Move, in.By) }))
-	mux.HandleFunc("/api/scramble", post(func(in struct {
+	mux.HandleFunc("/api/play", post(func(_ context.Context, in PlayRequest) (any, error) { return s.Play(in) }))
+	mux.HandleFunc("/api/reset", post(func(context.Context, struct{}) (any, error) { s.Reset(); return struct{}{}, nil }))
+	mux.HandleFunc("/api/move", post(func(_ context.Context, in struct{ Move, By string }) (any, error) { return struct{}{}, s.Move(in.Move, in.By) }))
+	mux.HandleFunc("/api/scramble", post(func(_ context.Context, in struct {
 		Moves []string
 		Len   int
 	}) (any, error) {
@@ -281,5 +283,5 @@ func (s *Session) routes(mux *http.ServeMux) {
 		}
 		return in.Moves, s.Scramble(in.Moves)
 	}))
-	mux.HandleFunc("/api/step", post(func(req StepRequest) (any, error) { return s.Step(req) }))
+	mux.HandleFunc("/api/step", post(func(ctx context.Context, req StepRequest) (any, error) { return s.Step(ctx, req) }))
 }
