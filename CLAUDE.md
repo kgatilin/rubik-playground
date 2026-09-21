@@ -169,6 +169,9 @@ Stated so results are read correctly; none of it is compensated unless listed.
   does not change this: `R U F'`, no lookahead, six decisions, `U` every time.
 - With `lookahead` Jev is a confident argmax (0.9+) and plays greedy on the sticker
   count: solves 2-move scrambles, stalls near 38/54 on longer ones.
+- First leaderboard game by a CLI agent (`claude-fable-5-1`, `text`, no simulation): solved
+  in 67 face turns, 6m45s, 8 `move` calls: cross 9, three paired slot inserts 6 + 7 + 7,
+  last middle edge 8, last layer 6 + 9 + 15.
 - A CLI agent (Claude) solved a 20-move scramble in 99 face turns layer by layer; the
   first 30 turns used simulation, which the rules now forbid.
 
@@ -187,8 +190,9 @@ Stated so results are read correctly; none of it is compensated unless listed.
   `play`, `leaderboard`.
 - `index.html` — canvas cube and the game log, embedded into the binary. The log is the
   main surface: one card per decision (moves, sticker delta, probabilities or thought
-  summary, the observation the player saw, the raw record), grouped lines for moves by
-  CLI agents or by hand, separators for game start and end. Above the log: the player,
+  summary, the observation the player saw, the raw record), one line per `move` call of a
+  CLI agent or click by hand (turn numbers, the moves, the pause before the call, the time
+  since the game started; events carry a server `time`, and the moves of one call share it), separators for game start and end. Above the log: the player,
   thinking level and faces (observation) selectors, Play (register a leaderboard game and
   run), Run (keep playing the current cube), Step, Stop, and the Leaderboard panel. The
   server replays the current game's events on connect

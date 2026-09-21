@@ -17,10 +17,11 @@ func TestGameLifecycleAndLeaderboard(t *testing.T) {
 	}
 	undo := slices.Clone(s.scramble)
 	slices.Reverse(undo)
-	for _, m := range undo {
-		if err := s.Move(Inverse(m), "model-a"); err != nil {
-			t.Fatal(err)
-		}
+	for i, m := range undo {
+		undo[i] = Inverse(m)
+	}
+	if err := s.Move(undo, "model-a"); err != nil {
+		t.Fatal(err)
 	}
 	if s.game != nil {
 		t.Fatal("game still open after the cube was solved")

@@ -284,18 +284,9 @@ func playCmds() []*cobra.Command {
 		Short: "Turn faces of the served cube, e.g. move R U R'",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			for _, m := range strings.Fields(strings.Join(args, " ")) {
-				body, _ := json.Marshal(map[string]string{"move": m, "by": by})
-				resp, err := http.Post("http://"+addr+"/api/move", "application/json", bytes.NewReader(body))
-				if err != nil {
-					return err
-				}
-				msg, _ := io.ReadAll(resp.Body)
-				resp.Body.Close()
-				if resp.StatusCode != http.StatusOK {
-					return fmt.Errorf("%s: %s", m, strings.TrimSpace(string(msg)))
-				}
-				time.Sleep(280 * time.Millisecond) // let the page finish the turn
+			moves := strings.Fields(strings.Join(args, " "))
+			if err := call(addr, "/api/move", map[string]any{"moves": moves, "by": by}, &struct{}{}); err != nil {
+				return err
 			}
 			return observe()
 		},

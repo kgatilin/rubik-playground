@@ -91,9 +91,9 @@ func (s *Session) closeGame(outcome string) {
 }
 
 // record appends one move to the cube and ends the game when it is over; callers hold s.mu.
-func (s *Session) record(m, by string) {
+func (s *Session) record(m, by string, at time.Time) {
 	s.history = append(s.history, m)
-	s.publish(event{Type: "move", Move: m, By: by})
+	s.publish(event{Type: "move", Move: m, By: by, Time: at})
 	if s.game == nil {
 		return
 	}

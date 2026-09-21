@@ -50,6 +50,8 @@
   .card.latest { border-color:#3c4656; }
   .card > header { display:flex; gap:10px; align-items:baseline; padding:8px 10px; cursor:pointer; flex-wrap:wrap; }
   .card .n { color:var(--dim); min-width:34px; }
+  .moveline { display:flex; gap:8px; align-items:baseline; } .moveline .turns { color:var(--dim); min-width:54px; }
+  .moveline .when { color:var(--dim); margin-left:auto; white-space:nowrap; }
   .chips { display:flex; gap:4px; flex-wrap:wrap; }
   .chip { background:#0d0f13; border:1px solid var(--line); border-radius:4px; padding:0 6px; font-weight:600; }
   .card .who { color:var(--dim); } .card .meta { color:var(--dim); margin-left:auto; white-space:nowrap; }
@@ -283,19 +285,26 @@ function note(html, err) {
   return add(d);
 }
 const log = (text, err) => note(esc(text), err);
+let gameStart = null, lastAt = null;   // clock of the current game, from event times
 function separator(text) {
   lastMoves = null;
   const d = document.createElement('div'); d.className = 'sep'; d.textContent = text;
   return add(d);
 }
-// Consecutive moves by the same player share one line.
-function logMove(move, by, n) {
-  if (!lastMoves || lastMoves.by !== by) {
-    const d = note(`<b>${esc(by)}</b> <span class="chips"></span>`);
-    d.style.display = 'flex'; d.style.gap = '8px'; d.style.flexWrap = 'wrap';
-    lastMoves = { by, chips: d.querySelector('.chips') };
+// One line per move call of an external player: turn numbers, the moves, the pause
+// before the call and the time since the game started.
+const dur = ms => { const t = Math.max(0, Math.round(ms / 1000)); return t >= 60 ? `${Math.floor(t / 60)}m${String(t % 60).padStart(2, '0')}s` : `${t}s`; };
+function logMove(e) {
+  const by = e.by || 'unknown', n = e.history.length, at = Date.parse(e.time);
+  if (!lastMoves || lastMoves.by !== by || lastMoves.time !== e.time) {
+    const d = note(`<span class="turns"></span><b>${esc(by)}</b><span class="chips"></span>`
+      + `<span class="when" title="pause before this call · time since the game started">+${dur(at - (lastAt ?? at))} · ${dur(at - (gameStart ?? at))}</span>`);
+    d.classList.add('moveline');
+    lastMoves = { by, time: e.time, first: n, turns: d.querySelector('.turns'), chips: d.querySelector('.chips') };
   }
-  lastMoves.chips.insertAdjacentHTML('beforeend', `<span class="chip" title="face turn #${n}">${esc(move)}</span>`);
+  lastAt = at;
+  lastMoves.turns.textContent = lastMoves.first === n ? `#${n}` : `#${lastMoves.first}–${n}`;
+  lastMoves.chips.insertAdjacentHTML('beforeend', `<span class="chip" title="face turn #${n}">${esc(e.move)}</span>`);
   if (follow) logEl.scrollTop = logEl.scrollHeight;
 }
 // Thought summaries come as light markdown: paragraphs, **bold**, `code`.
@@ -346,7 +355,9 @@ function logEvent(e) {
   if (e.type === 'decision') decisionCard(e.record);
   else if (e.type === 'scramble') separator(`scramble · ${e.moves.length} moves`);
   else if (e.type === 'game') { separator(e.game.outcome ? `game over · ${e.game.player} · ${e.game.outcome} · ${e.game.moves.length} face turns` : `game · ${e.game.player} · faces: ${e.game.observation}`); if (e.game.outcome) loadBoard(); }
-  else if (e.type === 'move' && !builtIn(e.by)) logMove(e.move, e.by || 'unknown', e.history.length);
+  else if (e.type === 'move' && !builtIn(e.by)) logMove(e);
+  if (e.type === 'scramble') gameStart = lastAt = Date.parse(e.time);
+  else if (e.type === 'decision') lastAt = Date.parse(e.record.time) + e.record.ms;
 }
 
 // ---------- server session ----------
@@ -368,7 +379,7 @@ stream.onmessage = msg => {
       resetCube();
       [...(e.scramble || []), ...(e.history || [])].forEach(mv => commit(parseMove(mv)));
       history = e.history || [];
-      logEl.textContent = ''; lastMoves = null; stats = { calls: 0, ms: 0, tokens: 0 }; $('runName').textContent = '';
+      logEl.textContent = ''; lastMoves = null; gameStart = lastAt = null; stats = { calls: 0, ms: 0, tokens: 0 }; $('runName').textContent = '';
       (e.log || []).forEach(logEvent);
       updateHud();
     });
