@@ -88,7 +88,7 @@
   </section>
 
   <details>
-    <summary>Last request / response</summary>
+    <summary>Last step record</summary>
     <pre id="raw"></pre>
   </details>
 </aside>
@@ -114,9 +114,8 @@ const LETTER  = ['W','Y','R','O','G','B'];          // home colour of that face
 const HEX     = { W:'#f4f4f0', Y:'#ffd500', R:'#d9262c', O:'#ff7a1a', G:'#16a85a', B:'#1f5fd6' };
 const AXIS = { U:[1,1], D:[1,-1], R:[0,1], L:[0,-1], F:[2,1], B:[2,-1] };
 
-let cubies, history, prefix, runId;   // cube = solved + prefix (scrambles) + history
+let cubies, history;   // history mirrors the server session; the page only renders
 function resetCube() {
-  prefix = []; runId = null;
   cubies = [];
   for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++)
     if (x || y || z) cubies.push({ p:[x,y,z], home:[x,y,z], m:ID });
@@ -238,63 +237,74 @@ function log(text, err) {
   $('log').prepend(d);
 }
 
+// ---------- server session ----------
+// The cube lives on the server. Buttons post commands; every change (from this page,
+// another page or `jev-playground run --ui`) comes back on the event stream and is drawn here.
+async function post(path, body = {}) {
+  const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const text = await res.text();
+  if (!res.ok) throw new Error(text.trim() || `${path}: ${res.status}`);
+  return JSON.parse(text);
+}
+const send = (path, body) => post(path, body).catch(e => log(e.message, true));
+
+function showDecision(r) {
+  stats.calls++; stats.ms += r.ms; stats.tokens += r.input_tokens;
+  const top = Object.entries(r.probabilities).sort((x, y) => y[1] - x[1]).slice(0, 6);
+  $('probs').innerHTML = top.map(([m, p]) =>
+    `<div class="bar"><span>${m === r.move ? '<b>' + m + '</b>' : m}</span><span><i style="width:${p * 100}%"></i></span><span>${(p * 100).toFixed(1)}%</span></div>`).join('')
+    + `<div style="color:var(--dim);margin-top:6px">confidence ${r.confidence.toFixed(2)} · ${r.ms} ms · ${r.model} · runs/${r.request.run}.jsonl</div>`;
+  $('raw').textContent = JSON.stringify(r, null, 2);
+  log(`#${r.step} ${r.move}  p=${(r.probabilities[r.move] ?? 0).toFixed(2)}  conf ${r.confidence.toFixed(2)}  ${r.matched_before}→${r.matched_after}  ${r.ms} ms`);
+}
+
+const stream = new EventSource('/api/events');
+stream.onmessage = msg => {
+  const e = JSON.parse(msg.data);
+  if (e.type === 'decision') return showDecision(e.record);
+  if (e.type === 'move') return turn(e.move);
+  if (e.type === 'scramble') {
+    e.moves.forEach(mv => turn(mv, 70, false));
+    chain = chain.then(() => { history = []; updateHud(); log('scramble: ' + e.moves.join(' ')); });
+    return;
+  }
+  chain = chain.then(() => {   // sync: rebuild without animation
+    resetCube();
+    [...(e.scramble || []), ...(e.history || [])].forEach(mv => commit(parseMove(mv)));
+    history = e.history || [];
+    updateHud();
+  });
+};
+stream.onerror = () => log('event stream lost, reconnecting', true);
+
 for (const f of 'UDLRFB') for (const m of ['', "'"]) {
-  const b = document.createElement('button'); b.textContent = f + m; b.onclick = () => turn(f + m);
+  const b = document.createElement('button'); b.textContent = f + m; b.onclick = () => send('/api/move', { move: f + m });
   $('manual').append(b);
 }
 addEventListener('keydown', e => {
   if (e.target.matches('input, textarea') || e.metaKey || e.ctrlKey) return;
   const f = e.key.toUpperCase();
-  if (AXIS[f]) turn(f + (e.shiftKey ? "'" : ''));
+  if (AXIS[f]) send('/api/move', { move: f + (e.shiftKey ? "'" : '') });
 });
-$('reset').onclick = () => { chain = chain.then(() => { resetCube(); updateHud(); }); };
-$('scramble').onclick = () => {
-  const n = +$('scrambleN').value || 6, seq = [];
-  while (seq.length < n) {
-    const mv = 'UDLRFB'[Math.random() * 6 | 0] + ['', "'", '2'][Math.random() * 3 | 0];
-    if (!seq.length || seq[seq.length - 1][0] !== mv[0]) seq.push(mv);
-  }
-  seq.forEach(mv => turn(mv, 70, false));
-  chain = chain.then(() => { prefix.push(...history, ...seq); history = []; runId = null; updateHud(); log('scramble: ' + seq.join(' ')); });
-};
+$('reset').onclick = () => send('/api/reset');
+$('scramble').onclick = () => send('/api/scramble', { len: +$('scrambleN').value || 6 });
 
 // ---------- Jev ----------
-// The server owns the prompt: it rebuilds the cube from prefix + history, asks Jev,
-// appends the step to runs/<run>.jsonl and returns the record.
-async function decide() {
-  runId ??= 'web-' + new Date().toISOString().replace(/\D/g, '').slice(0, 14);
-  const body = { run: runId, scramble: prefix, history, options: $('moves').value.trim().split(/[\s,]+/).filter(Boolean),
-    instructions: $('instr').value, sample: $('sample').checked, no_undo: $('noUndo').checked,
-    shuffle: $('shuffle').checked, hide_history: $('hideHistory').checked, lookahead: $('lookahead').checked };
-  const res = await fetch('/api/step', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  const text = await res.text();
-  $('raw').textContent = JSON.stringify(body, null, 2) + '\n\n→ ' + res.status + '\n' + text;
-  if (!res.ok) throw new Error(`step ${res.status}: ${text.slice(0, 300)}`);
-  const r = JSON.parse(text);
-  stats.calls++; stats.ms += r.ms; stats.tokens += r.input_tokens;
-
-  const top = Object.entries(r.probabilities).sort((x, y) => y[1] - x[1]).slice(0, 6);
-  $('probs').innerHTML = top.map(([m, p]) =>
-    `<div class="bar"><span>${m === r.move ? '<b>' + m + '</b>' : m}</span><span><i style="width:${p * 100}%"></i></span><span>${(p * 100).toFixed(1)}%</span></div>`).join('')
-    + `<div style="color:var(--dim);margin-top:6px">confidence ${r.confidence.toFixed(2)} · ${r.ms} ms · ${r.model} · runs/${runId}.jsonl</div>`;
-  return { move: r.move, p: r.probabilities[r.move], ms: r.ms };
-}
+const stepRequest = () => ({ options: $('moves').value.trim().split(/[\s,]+/).filter(Boolean),
+  instructions: $('instr').value, sample: $('sample').checked, no_undo: $('noUndo').checked,
+  shuffle: $('shuffle').checked, hide_history: $('hideHistory').checked, lookahead: $('lookahead').checked });
 
 let running = false;
 async function run(limit) {
   if (running) return;
   running = true; $('run').disabled = $('step').disabled = true; $('stop').disabled = false;
-  let done = 0;
+  let done = 0, last = null;
   try {
-    await chain;
     for (; done < limit && running; done++) {
-      if (matched(facelets()) === 54) { log('solved'); break; }
-      const d = await decide();
-      log(`#${history.length + 1} ${d.move}  p=${d.p.toFixed(2)}  ${Math.round(d.ms)} ms`);
-      await turn(d.move);
+      last = await post('/api/step', stepRequest());
+      if (last.solved) { done++; break; }
     }
-    const n = matched(facelets());
-    if (limit > 1) log(`run ended after ${done} moves: ${n === 54 ? 'solved' : n + '/54 stickers in place'}`);
+    if (limit > 1 && last) log(`run ended after ${done} moves: ${last.solved ? 'solved' : last.matched_after + '/54 stickers in place'}`);
   } catch (e) { log(e.message, true); }
   running = false; $('run').disabled = $('step').disabled = false; $('stop').disabled = true;
 }

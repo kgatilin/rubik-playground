@@ -5,9 +5,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math/rand/v2"
 	"net/http"
@@ -70,27 +72,10 @@ func serveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				w.Write(indexHTML)
-			})
-			http.HandleFunc("/api/step", func(w http.ResponseWriter, r *http.Request) {
-				var req StepRequest
-				if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-				rec, err := jev.Decide(req)
-				if err != nil {
-					log.Printf("step: %v", err)
-					http.Error(w, err.Error(), http.StatusBadGateway)
-					return
-				}
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(rec)
-			})
+			mux := http.NewServeMux()
+			newSession(jev).routes(mux)
 			log.Printf("cube at http://%s, run logs in %s/", addr, runsDir)
-			return http.ListenAndServe(addr, nil)
+			return http.ListenAndServe(addr, mux)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "http", "localhost:7810", "listen address")
@@ -122,11 +107,16 @@ func runCmd() *cobra.Command {
 		scrambleLen int
 		moves       string
 		maxMoves    int
+		ui          string
 	)
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Scramble a cube and let Jev play up to --max moves",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			req.Options = strings.Fields(moves)
+			if ui != "" {
+				return runOnServer(ui, req, strings.Fields(scramble), maxMoves)
+			}
 			jev, err := newJev()
 			if err != nil {
 				return err
@@ -135,7 +125,6 @@ func runCmd() *cobra.Command {
 			if scramble == "" {
 				req.Scramble = randomScramble(scrambleLen)
 			}
-			req.Options = strings.Fields(moves)
 			req.Run = newRunID("cli")
 			fmt.Printf("run %s  scramble: %s\n", req.Run, strings.Join(req.Scramble, " "))
 			for range maxMoves {
@@ -155,6 +144,8 @@ func runCmd() *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
+	f.StringVar(&ui, "ui", "", "play on the cube of a running `serve` so the page shows it, e.g. localhost:7810; without --scramble the current cube is kept")
+	f.Lookup("ui").NoOptDefVal = "localhost:7810"
 	f.StringVar(&scramble, "scramble", "", "scramble moves, e.g. \"R U F'\" (default: random)")
 	f.IntVar(&scrambleLen, "scramble-len", 3, "length of the random scramble")
 	f.IntVar(&maxMoves, "max", 10, "move limit")
@@ -166,6 +157,47 @@ func runCmd() *cobra.Command {
 	f.BoolVar(&req.HideHistory, "hide-history", false, "leave the move history out of the state text")
 	f.BoolVar(&req.Lookahead, "lookahead", true, "describe each move by the sticker count it leads to")
 	return cmd
+}
+
+// runOnServer plays on the served cube: the page animates every move.
+func runOnServer(addr string, req StepRequest, scramble []string, maxMoves int) error {
+	call := func(path string, in, out any) error {
+		body, _ := json.Marshal(in)
+		resp, err := http.Post("http://"+addr+path, "application/json", bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			msg, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("%s: %s", path, strings.TrimSpace(string(msg)))
+		}
+		return json.NewDecoder(resp.Body).Decode(out)
+	}
+	if len(scramble) > 0 {
+		var applied []string
+		if err := call("/api/reset", struct{}{}, &struct{}{}); err != nil {
+			return err
+		}
+		if err := call("/api/scramble", map[string]any{"moves": scramble}, &applied); err != nil {
+			return err
+		}
+		fmt.Printf("scramble: %s\n", strings.Join(applied, " "))
+	}
+	var rec StepRecord
+	for range maxMoves {
+		rec = StepRecord{}
+		if err := call("/api/step", req, &rec); err != nil {
+			return err
+		}
+		printStep(&rec)
+		if rec.Solved {
+			fmt.Println("solved")
+			break
+		}
+	}
+	fmt.Printf("log: %s\n", filepath.Join(runsDir, rec.Request.Run+".jsonl"))
+	return nil
 }
 
 func showCmd() *cobra.Command {
