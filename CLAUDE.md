@@ -1,5 +1,8 @@
 # jev-playground
 
+`AGENTS.md` is a symlink to this file: one set of instructions for every coding agent and
+for agents that come here to play.
+
 A Rubik's cube game for comparing players: decision models called by the server
 (Jev, Gemini) and agents that play from a terminal through the CLI.
 
@@ -62,8 +65,12 @@ turn accounting and the same log:
 
 ### Rules for external (CLI) players
 
-- Allowed commands: `jev-playground play --as <name>`, `jev-playground state`, `jev-playground move <actions> --as <name>` (each takes `--pieces` or `--image <file>`),
+- Allowed commands: `jev-playground play --as <name>` (register: fresh scramble, the
+  result goes to the leaderboard under that name), `jev-playground state`,
+  `jev-playground move <actions> --as <name>`; each takes `--pieces` or `--image <file>`.
   `jev-playground actions` **(proposed)**. Nothing else touches the cube.
+- A leaderboard attempt starts with `play` and is played in one observation mode, the one
+  given to `play`. Calling `play` again drops the attempt as `abandoned`.
 - No scripts, loops, solvers or simulation of the cube in code. The cube is simulated
   only in the player's head. `state` takes no cube arguments for this reason; `--image` only
   names the file the picture is written to.
@@ -139,8 +146,9 @@ Stated so results are read correctly; none of it is compensated unless listed.
 - **Decisions per look.** A built-in player acts once per observation. A CLI agent may
   send a long action list after one look. The score counts face turns, so this changes
   the number of calls and nothing else.
-- **Piece identity.** Outside the `pieces` observation, the observation is facelets only: which three stickers form one
-  corner has to be derived from the stated face orientation. Same for everyone.
+- **Piece identity.** Outside the `pieces` observation the player sees facelets only: which
+  three stickers form one corner has to be derived from the stated face orientation. Same
+  for everyone.
 - **Prior knowledge.** Bundles hand every player the standard algorithms; knowing when
   to use them is the test.
 
@@ -175,11 +183,15 @@ Stated so results are read correctly; none of it is compensated unless listed.
 - `game.go` — `Game`, `Session.Play`, game closing, `leaderboard` over `runs/games.jsonl`.
 - `server.go` — `Session` (the served cube), SSE event stream `/api/events`, commands
   `/api/reset`, `/api/scramble`, `/api/move`, `/api/step`. The page only renders events.
-- `main.go` — cobra commands: `serve`, `run [--ui]`, `show`, `state`, `move`.
+- `main.go` — cobra commands: `serve`, `run [--ui [--game]]`, `show`, `state`, `move`,
+  `play`, `leaderboard`.
 - `index.html` — canvas cube and the game log, embedded into the binary. The log is the
   main surface: one card per decision (moves, sticker delta, probabilities or thought
   summary, the observation the player saw, the raw record), grouped lines for moves by
-  CLI agents or by hand. The server replays the current game's events on connect
+  CLI agents or by hand, separators for game start and end. Above the log: the player,
+  thinking level and faces (observation) selectors, Play (register a leaderboard game and
+  run), Run (keep playing the current cube), Step, Stop, and the Leaderboard panel. The
+  server replays the current game's events on connect
   (`sync.log`), so the log survives a reload. `#open` in the URL expands every card.
 
 The page's Stop aborts the `/api/step` request; the request context reaches the model call
