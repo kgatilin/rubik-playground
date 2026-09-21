@@ -41,10 +41,11 @@ turn accounting and the same log:
 
 ### Rules for external (CLI) players
 
-- Allowed commands: `jev-playground state`, `jev-playground move <actions> --as <name>`,
+- Allowed commands: `jev-playground state [--image <file>]`, `jev-playground move <actions> --as <name> [--image <file>]`,
   `jev-playground actions` **(proposed)**. Nothing else touches the cube.
 - No scripts, loops, solvers or simulation of the cube in code. The cube is simulated
-  only in the player's head. `state` takes no arguments for this reason.
+  only in the player's head. `state` takes no cube arguments for this reason; `--image` only
+  names the file the picture is written to.
 - Looking is free: `state` can be called any number of times.
 - Any number of actions per `move` call; they are applied in order and each one costs
   its face turns.
@@ -66,6 +67,16 @@ players receive it verbatim:
 The observation has no per-player switches. `--no-undo` (the inverse of the previous
 move is not offered) and `--shuffle` (option order) act on the action list of built-in
 players only.
+
+`observation` is a game setting, recorded in the log: `text` (default) or `image`. With
+`image` the six face rows are replaced by one PNG (`Cube.StateImage`, `image.go`): the
+unfolded net (U / L F R B / D) and two corner views (from U-F-R, from D-B-L), face letters
+on the centre stickers. Everything else (sticker count, layer progress, turns, history)
+stays text. Gemini gets the picture as an inline part of the first message and inside each
+tool response; a CLI agent gets it with `--image <file>`; Jev takes text only and refuses
+the mode. The page picks it with the "faces" selector next to the player, and a decision
+card shows the picture the player saw. Games with `image` are a separate category from
+games with `text`.
 
 `lookahead` (each action's criteria lists the sticker count it leads to) is a game
 setting, recorded in the log. It is search done by the harness, so games played with it
@@ -112,6 +123,9 @@ Stated so results are read correctly; none of it is compensated unless listed.
 
 - Gemini (`gemini-3.8-flash`) solved 2-move scrambles in 2–3 face turns, 8–40 s per
   decision; it reasons the scramble back from the facelets. Longer scrambles not run yet.
+- First `image` game (`gemini-3.8-flash@low`, scramble `R U F'`): Vertex accepts the PNG
+  inside tool responses; the model misread face rows from the picture (F top row read as
+  red red yellow, it is red yellow yellow) and did not solve in three decisions.
 - `gemini-2.5-flash` returns an empty STOP response when a tool call is forced
   (`FunctionCallingConfigModeAny`), so it cannot play.
 - Without `lookahead` Jev's distribution over the 18 moves is near flat (top option
@@ -128,6 +142,8 @@ Stated so results are read correctly; none of it is compensated unless listed.
 ## Architecture
 
 - `cube.go` — cube model, facelets, `StateText`. `cube_test.go` pins move notation.
+- `image.go` — `StateImage`: the faces as a PNG, drawn with the standard library and the
+  `x/image` bitmap font.
 - `jev.go` — `Decider` interface, shared `prepareStep`/`finishStep`, `Jev.Decide`, one
   JSON line per decision in `runs/<run>.jsonl`.
 - `gemini.go` — `Gemini.Decide`: the tool-calling conversation.

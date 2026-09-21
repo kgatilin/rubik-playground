@@ -213,19 +213,31 @@ func (c *Cube) Progress() Progress {
 	return p
 }
 
-// StateText is the cube description sent to Jev as `state`.
-func (c *Cube) StateText(history []string, limit int) string {
-	g := c.Facelets()
+// Observation modes: the faces as text rows, or as the picture of StateImage.
+const (
+	obsText  = "text"
+	obsImage = "image"
+)
+
+// StateText is the observation every player gets. With obsImage the face rows
+// are left out: the faces travel as StateImage next to this text.
+func (c *Cube) StateText(history []string, limit int, mode string) string {
 	var b strings.Builder
-	b.WriteString("3x3 Rubik's cube. Colours: W white, Y yellow, R red, O orange, G green, B blue.\n")
-	b.WriteString("Each face is 3 rows, top to bottom, read from outside the cube (U with Back at the top, D with Front at the top, side faces with U at the top).\n")
-	for _, f := range faces {
-		grid := g[f]
-		rows := make([]string, 3)
-		for i, r := range grid {
-			rows[i] = strings.Join(r[:], "")
+	if mode == obsImage {
+		b.WriteString("3x3 Rubik's cube. Colours: white, yellow, red, orange, green, blue.\n")
+		b.WriteString(imageLegend)
+	} else {
+		b.WriteString("3x3 Rubik's cube. Colours: W white, Y yellow, R red, O orange, G green, B blue.\n")
+		b.WriteString("Each face is 3 rows, top to bottom, read from outside the cube (U with Back at the top, D with Front at the top, side faces with U at the top).\n")
+		g := c.Facelets()
+		for _, f := range faces {
+			grid := g[f]
+			rows := make([]string, 3)
+			for i, r := range grid {
+				rows[i] = strings.Join(r[:], "")
+			}
+			fmt.Fprintf(&b, "%s (%s, centre %s): %s\n", f, faceName[f[0]], grid[1][1], strings.Join(rows, " / "))
 		}
-		fmt.Fprintf(&b, "%s (%s, centre %s): %s\n", f, faceName[f[0]], grid[1][1], strings.Join(rows, " / "))
 	}
 	fmt.Fprintf(&b, "Stickers matching their face centre: %d/54\n", c.Matched())
 	p := c.Progress()

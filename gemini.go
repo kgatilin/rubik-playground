@@ -69,15 +69,23 @@ func (g *Gemini) Decide(req StepRequest) (*StepRecord, error) {
 		return nil, err
 	}
 	rec := &StepRecord{Time: time.Now().UTC(), Step: len(req.History) + 1, Request: req, Offered: offered,
-		State: cube.StateText(req.History, req.Limit), MatchedBefore: cube.Matched()}
-
-	if g.pending == nil {
-		g.contents = append(g.contents, genai.NewContentFromText(rec.State, genai.RoleUser))
-	} else {
-		part := genai.NewPartFromFunctionResponse(g.pending.Name, map[string]any{"observation": rec.State})
-		part.FunctionResponse.ID = g.pending.ID
-		g.contents = append(g.contents, genai.NewContentFromParts([]*genai.Part{part}, genai.RoleUser))
+		State: cube.StateText(req.History, req.Limit, req.Observation), MatchedBefore: cube.Matched()}
+	if req.Observation == obsImage {
+		rec.Image = cube.StateImage()
 	}
+
+	parts := []*genai.Part{genai.NewPartFromText(rec.State)}
+	if g.pending != nil {
+		var media []*genai.FunctionResponsePart
+		if rec.Image != nil {
+			media = append(media, genai.NewFunctionResponsePartFromBytes(rec.Image, "image/png"))
+		}
+		parts[0] = genai.NewPartFromFunctionResponseWithParts(g.pending.Name, map[string]any{"observation": rec.State}, media)
+		parts[0].FunctionResponse.ID = g.pending.ID
+	} else if rec.Image != nil {
+		parts = append(parts, genai.NewPartFromBytes(rec.Image, "image/png"))
+	}
+	g.contents = append(g.contents, genai.NewContentFromParts(parts, genai.RoleUser))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

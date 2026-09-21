@@ -6,6 +6,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -170,6 +171,7 @@ func runCmd() *cobra.Command {
 	f.BoolVar(&req.NoUndo, "no-undo", true, "do not offer the inverse of the previous move")
 	f.BoolVar(&req.Shuffle, "shuffle", false, "randomise the order of offered moves")
 	f.BoolVar(&req.Lookahead, "lookahead", true, "describe each move by the sticker count it leads to")
+	f.StringVar(&req.Observation, "observation", obsText, "how the faces are shown to the player: text or image (image: not for jev)")
 	return cmd
 }
 
@@ -232,19 +234,28 @@ func servedCube(addr string) (*Cube, []string, error) {
 
 // playCmds are for a player other than Jev: read the served cube, think, move.
 func playCmds() []*cobra.Command {
-	var addr, by string
+	var addr, by, imagePath string
+	// observe prints the observation; with --image the faces go to a PNG instead of the text rows.
+	observe := func() error {
+		cube, history, err := servedCube(addr)
+		if err != nil {
+			return err
+		}
+		if imagePath == "" {
+			fmt.Println(cube.StateText(history, defaultLimit, obsText))
+			return nil
+		}
+		if err := os.WriteFile(imagePath, cube.StateImage(), 0o644); err != nil {
+			return err
+		}
+		fmt.Printf("%s\nImage: %s\n", cube.StateText(history, defaultLimit, obsImage), imagePath)
+		return nil
+	}
 	state := &cobra.Command{
 		Use:   "state",
 		Short: "Print the served cube: the same observation every player gets",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cube, history, err := servedCube(addr)
-			if err != nil {
-				return err
-			}
-			fmt.Println(cube.StateText(history, defaultLimit))
-			return nil
-		},
+		RunE: func(cmd *cobra.Command, args []string) error { return observe() },
 	}
 	move := &cobra.Command{
 		Use:   "move <moves...>",
@@ -264,16 +275,12 @@ func playCmds() []*cobra.Command {
 				}
 				time.Sleep(280 * time.Millisecond) // let the page finish the turn
 			}
-			cube, history, err := servedCube(addr)
-			if err != nil {
-				return err
-			}
-			fmt.Println(cube.StateText(history, defaultLimit))
-			return nil
+			return observe()
 		},
 	}
 	for _, c := range []*cobra.Command{state, move} {
 		c.Flags().StringVar(&addr, "ui", "localhost:7810", "address of the running serve")
+		c.Flags().StringVar(&imagePath, "image", "", "write the faces as a PNG to this file instead of printing them as text")
 	}
 	move.Flags().StringVar(&by, "as", "cli", "player name shown in the page log")
 	return []*cobra.Command{state, move}
@@ -318,8 +325,8 @@ func showCmd() *cobra.Command {
 					return err
 				}
 				if first {
-					fmt.Printf("run %s  player: %s  scramble: %s  sample=%v no_undo=%v shuffle=%v lookahead=%v\ninstructions: %s\n",
-						r.Request.Run, r.Request.Player, strings.Join(r.Request.Scramble, " "), r.Request.Sample, r.Request.NoUndo, r.Request.Shuffle, r.Request.Lookahead, r.Request.Instructions)
+					fmt.Printf("run %s  player: %s  scramble: %s  sample=%v no_undo=%v shuffle=%v lookahead=%v observation=%s\ninstructions: %s\n",
+						r.Request.Run, r.Request.Player, strings.Join(r.Request.Scramble, " "), r.Request.Sample, r.Request.NoUndo, r.Request.Shuffle, r.Request.Lookahead, cmp.Or(r.Request.Observation, obsText), r.Request.Instructions)
 				}
 				printStep(&r)
 				if state {

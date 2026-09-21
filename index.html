@@ -58,6 +58,7 @@
   .pbar i { display:block; height:7px; background:var(--acc); border-radius:4px; min-width:1px; opacity:.85; }
   .pbar span:last-child { color:var(--dim); text-align:right; }
   .sub { margin-top:8px; } .sub > summary { color:var(--dim); cursor:pointer; }
+  .sub img.obs { display:block; width:100%; margin-top:6px; border-radius:4px; }
   .sub pre { font:11.5px/1.45 var(--mono); color:var(--dim); white-space:pre-wrap; word-break:break-word; margin:6px 0 0; }
   @media (max-width:900px) { body { grid-template-columns:1fr; grid-template-rows:48vh auto; height:auto; } aside { height:auto; border-left:0; border-top:1px solid var(--line); } #log { max-height:70vh; } }
 </style>
@@ -71,6 +72,7 @@
   <div class="bar-top">
     <select id="player" title="built-in player"></select>
     <select id="thinking" title="Gemini thinking level"><option value="">thinking: default</option><option>minimal</option><option>low</option><option>medium</option><option>high</option></select>
+    <select id="observation" title="how the faces are shown to the player"><option value="text">faces: text</option><option value="image">faces: image</option></select>
     <button class="go" id="run">Run</button>
     <button id="step">Step</button>
     <button id="stop" disabled>Stop</button>
@@ -305,8 +307,8 @@ function decisionCard(r) {
     + `<div class="body">`
     + (r.thoughts ? `<div class="thoughts">${renderThoughts(r.thoughts)}</div>` : '')
     + probs.slice(0, 6).map(([m, p]) => `<div class="pbar"><span>${r.moves.includes(m) ? '<b>' + esc(m) + '</b>' : esc(m)}</span><span><i style="width:${p * 100}%"></i></span><span>${(p * 100).toFixed(1)}%</span></div>`).join('')
-    + `<details class="sub"><summary>observation the player saw</summary><pre>${esc(r.state)}</pre></details>`
-    + `<details class="sub"><summary>record · ${esc(r.model || '')} · ${r.input_tokens} in${r.output_tokens ? ' / ' + r.output_tokens + ' out' : ''} tokens</summary><pre>${esc(JSON.stringify({ ...r, state: undefined, thoughts: undefined }, null, 2))}</pre></details>`
+    + `<details class="sub"><summary>observation the player saw${r.image ? ' · image' : ''}</summary>${r.image ? `<img class="obs" src="data:image/png;base64,${r.image}">` : ''}<pre>${esc(r.state)}</pre></details>`
+    + `<details class="sub"><summary>record · ${esc(r.model || '')} · ${r.input_tokens} in${r.output_tokens ? ' / ' + r.output_tokens + ' out' : ''} tokens</summary><pre>${esc(JSON.stringify({ ...r, state: undefined, thoughts: undefined, image: undefined }, null, 2))}</pre></details>`
     + `</div>`;
   const toggle = () => card.classList.toggle('open');
   card.querySelector('header').onclick = toggle;
@@ -382,7 +384,7 @@ $('reset').onclick = () => send('/api/reset');
 $('scramble').onclick = () => send('/api/scramble', { len: +$('scrambleN').value || 20 });
 
 // ---------- built-in players ----------
-const showThinking = () => { $('thinking').style.display = $('player').value.startsWith('gemini:') ? '' : 'none'; };
+const showThinking = () => { for (const id of ['thinking', 'observation']) $(id).style.display = $('player').value.startsWith('gemini:') ? '' : 'none'; };
 fetch('/api/players').then(r => r.json()).then(list => {
   $('player').innerHTML = list.map(p => `<option>${esc(p)}</option>`).join('');
   try { const saved = localStorage.getItem('player'); if (list.includes(saved)) $('player').value = saved; } catch {}
@@ -393,7 +395,8 @@ const playerId = () => $('player').value + ($('player').value.startsWith('gemini
 
 const stepRequest = () => ({ player: playerId(), options: $('moves').value.trim().split(/[\s,]+/).filter(Boolean),
   instructions: $('instr').value, sample: $('sample').checked, no_undo: $('noUndo').checked,
-  shuffle: $('shuffle').checked, lookahead: $('lookahead').checked });
+  shuffle: $('shuffle').checked, lookahead: $('lookahead').checked,
+  observation: $('player').value.startsWith('gemini:') ? $('observation').value : 'text' });
 
 let running = false;
 async function run(limit) {

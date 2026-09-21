@@ -38,6 +38,7 @@ type StepRequest struct {
 	NoUndo       bool     `json:"no_undo"`   // do not offer the inverse of the previous move
 	Shuffle      bool     `json:"shuffle"`   // randomise the order in which moves are listed
 	Lookahead    bool     `json:"lookahead"` // describe each move by the sticker count it leads to
+	Observation  string   `json:"observation,omitempty"` // how the faces are shown: "text" (default) or "image"
 }
 
 // StepRecord is the outcome of one decision and one line of runs/<run>.jsonl.
@@ -47,6 +48,7 @@ type StepRecord struct {
 	Request       StepRequest        `json:"request"`
 	Offered       []string           `json:"offered"` // in the order sent to Jev
 	State         string             `json:"state"`
+	Image         []byte             `json:"image,omitempty"` // PNG of the faces when the observation is an image
 	MatchedBefore int                `json:"matched_before"`
 	Choice        string             `json:"choice,omitempty"` // Jev's top option
 	Moves         []string           `json:"moves"`            // moves taken by this decision (Jev: one; differs from Choice when sampling)
@@ -118,6 +120,9 @@ func prepareStep(req StepRequest) (*Cube, []string, error) {
 	if len(offered) == 0 {
 		return nil, nil, fmt.Errorf("no moves offered")
 	}
+	if o := req.Observation; o != "" && o != obsText && o != obsImage {
+		return nil, nil, fmt.Errorf("unknown observation %q: use %s or %s", o, obsText, obsImage)
+	}
 	if req.Shuffle {
 		rand.Shuffle(len(offered), func(a, b int) { offered[a], offered[b] = offered[b], offered[a] })
 	}
@@ -142,12 +147,15 @@ func finishStep(rec *StepRecord, cube *Cube) error {
 
 // Decide asks Jev for the next move, appends the record to the run log and returns it.
 func (j *Jev) Decide(req StepRequest) (*StepRecord, error) {
+	if req.Observation == obsImage {
+		return nil, fmt.Errorf("jev takes a text state only: the image observation is for players that accept pictures")
+	}
 	cube, offered, err := prepareStep(req)
 	if err != nil {
 		return nil, err
 	}
 	rec := &StepRecord{Time: time.Now().UTC(), Step: len(req.History) + 1, Request: req, Offered: offered,
-		State: cube.StateText(req.History, req.Limit), MatchedBefore: cube.Matched()}
+		State: cube.StateText(req.History, req.Limit, obsText), MatchedBefore: cube.Matched()}
 
 	criteria := make(orderedCriteria, len(offered))
 	for i, m := range offered {
