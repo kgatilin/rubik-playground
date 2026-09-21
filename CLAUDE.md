@@ -67,8 +67,8 @@ are a separate category from games played without it.
 
 ## Actions
 
-One catalog, shown identically to every player: `criteria` for Jev, the response enum
-for Gemini, `actions` output for CLI agents.
+One catalog, shown identically to every player: `criteria` for Jev, the enum of the
+`move` tool's `actions` argument for Gemini, `actions` output for CLI agents.
 
 - 18 single moves: `U U' U2 D D' D2 L L' L2 R R' R2 F F' F2 B B' B2`
   (`X` is clockwise seen from outside face X).
