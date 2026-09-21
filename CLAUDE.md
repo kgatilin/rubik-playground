@@ -64,7 +64,9 @@ turn accounting and the same log:
     rendered when the next decision starts, so moves made by others in between are seen.
     The model's turns go back into the conversation untouched, so thought signatures
     survive and the model carries its own plan between decisions. Thought summaries are
-    logged (`thoughts`). Scramble and reset start a new conversation.
+    logged (`thoughts`), and so is the model's turn as returned (`response`: text parts and
+    function calls with their arguments, without thought signatures). Several `move` calls in
+    one turn are applied in order and each gets a tool response; the observation is in the last. Scramble and reset start a new conversation.
   - The page's player selector and `run --player` pick one; the list comes from
     `GEMINI_MODELS` (comma-separated, default in `players()`).
 - **external**: an agent in a terminal calls `state` and `move` against the served cube.

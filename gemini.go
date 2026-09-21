@@ -22,7 +22,7 @@ type Gemini struct {
 	model    string
 	level    genai.ThinkingLevel // empty: the model's default
 	contents []*genai.Content
-	pending  *genai.FunctionCall // answered with the observation at the start of the next decision
+	pending  []*genai.FunctionCall // answered at the start of the next decision, the last one with the observation
 }
 
 // newGemini takes "<model>" or "<model>@<thinking level>" (minimal, low, medium, high).
@@ -75,13 +75,21 @@ func (g *Gemini) Decide(ctx context.Context, req StepRequest) (*StepRecord, erro
 	}
 
 	parts := []*genai.Part{genai.NewPartFromText(rec.State)}
-	if g.pending != nil {
-		var media []*genai.FunctionResponsePart
-		if rec.Image != nil {
-			media = append(media, genai.NewFunctionResponsePartFromBytes(rec.Image, "image/png"))
+	if len(g.pending) > 0 {
+		// every call of the previous turn gets a response; the observation goes into the last one
+		parts = parts[:0]
+		for i, call := range g.pending {
+			part := genai.NewPartFromFunctionResponse(call.Name, map[string]any{"result": "applied"})
+			if i == len(g.pending)-1 {
+				var media []*genai.FunctionResponsePart
+				if rec.Image != nil {
+					media = append(media, genai.NewFunctionResponsePartFromBytes(rec.Image, "image/png"))
+				}
+				part = genai.NewPartFromFunctionResponseWithParts(call.Name, map[string]any{"observation": rec.State}, media)
+			}
+			part.FunctionResponse.ID = call.ID
+			parts = append(parts, part)
 		}
-		parts[0] = genai.NewPartFromFunctionResponseWithParts(g.pending.Name, map[string]any{"observation": rec.State}, media)
-		parts[0].FunctionResponse.ID = g.pending.ID
 	} else if rec.Image != nil {
 		parts = append(parts, genai.NewPartFromBytes(rec.Image, "image/png"))
 	}
@@ -106,23 +114,34 @@ func (g *Gemini) Decide(ctx context.Context, req StepRequest) (*StepRecord, erro
 		return nil, fmt.Errorf("gemini returned no move call (%s): %s", reason, resp.Text())
 	}
 	g.contents = append(g.contents, resp.Candidates[0].Content)
-	g.pending = calls[0]
+	g.pending = calls
 
+	// the raw record: every part of the model's turn except thought text (in Thoughts) and thought signatures
 	var thoughts []string
+	var raw []*genai.Part
 	for _, p := range resp.Candidates[0].Content.Parts {
-		if p.Thought && p.Text != "" {
-			thoughts = append(thoughts, p.Text)
+		if p.Thought {
+			if p.Text != "" {
+				thoughts = append(thoughts, p.Text)
+			}
+			continue
 		}
+		q := *p
+		q.ThoughtSignature = nil
+		raw = append(raw, &q)
 	}
+	rec.Response = &ModelResponse{Parts: raw, FinishReason: string(resp.Candidates[0].FinishReason)}
 	rec.Thoughts = strings.Join(thoughts, "\n")
 	if u := resp.UsageMetadata; u != nil {
 		rec.InputTokens, rec.OutputTokens = int(u.PromptTokenCount), int(u.CandidatesTokenCount+u.ThoughtsTokenCount)
 	}
 	rec.Model = g.model
 
-	actions, _ := calls[0].Args["actions"].([]any)
-	for _, a := range actions {
-		rec.Moves = append(rec.Moves, fmt.Sprint(a))
+	for _, call := range calls { // several move calls in one turn are applied in order
+		actions, _ := call.Args["actions"].([]any)
+		for _, a := range actions {
+			rec.Moves = append(rec.Moves, fmt.Sprint(a))
+		}
 	}
 	return rec, finishStep(rec, cube)
 }

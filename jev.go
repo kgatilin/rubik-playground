@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"google.golang.org/genai"
 )
 
 const (
@@ -56,12 +58,20 @@ type StepRecord struct {
 	Confidence    float64            `json:"confidence,omitempty"`
 	Probabilities map[string]float64 `json:"probabilities,omitempty"`
 	Thoughts      string             `json:"thoughts,omitempty"` // thought summary, for players that return one
+	Response      *ModelResponse     `json:"response,omitempty"` // the model's turn as returned, for players that call tools
 	MatchedAfter  int                `json:"matched_after"`
 	Solved        bool               `json:"solved"`
 	Model         string             `json:"model"`
 	InputTokens   int                `json:"input_tokens"`
 	OutputTokens  int                `json:"output_tokens,omitempty"`
 	Millis        int64              `json:"ms"`
+}
+
+// ModelResponse is the raw turn of a tool-calling player: text and function calls with their
+// arguments, without thought text (StepRecord.Thoughts) and thought signatures.
+type ModelResponse struct {
+	Parts        []*genai.Part `json:"parts"`
+	FinishReason string        `json:"finish_reason"`
 }
 
 type Jev struct {
