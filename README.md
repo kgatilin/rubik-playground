@@ -5,7 +5,15 @@ decision model. Each step sends the cube state plus one `choice` question (the o
 to Jev, applies the chosen move, and repeats up to a move limit.
 
     echo 'JEV_API_TOKEN=...' > .env
-    go run .            # http://localhost:7810
+    go build -o jev-playground .
+    ./jev-playground serve                              # http://localhost:7810
+    ./jev-playground run --scramble "R U" --lookahead   # same loop in the terminal
+    ./jev-playground show [run] [--state] [--list]      # read a run log
 
-The Go server embeds the page and proxies `/api/decide` to `https://api.typesafe.ai/v1/systemone`,
-so the token stays server-side.
+Both fronts go through `Jev.Decide` (`jev.go`): it rebuilds the cube from scramble + history,
+builds the prompt, calls `https://api.typesafe.ai/v1/systemone` and appends one JSON line per
+step to `runs/<run>.jsonl` (state text, offered order, probabilities, sticker counts, latency).
+The token stays server-side.
+
+Prompt knobs (page checkboxes and `run` flags): `--shuffle` option order, `--hide-history`,
+`--no-undo`, `--sample`, `--lookahead` (each move's criteria lists the sticker count it leads to).

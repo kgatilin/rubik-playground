@@ -64,6 +64,9 @@
     <div class="row" style="margin-top:8px">
       <label><input id="sample" type="checkbox"> sample from probabilities</label>
       <label><input id="noUndo" type="checkbox" checked> hide the undo move</label>
+      <label><input id="shuffle" type="checkbox" checked> shuffle option order</label>
+      <label><input id="hideHistory" type="checkbox" checked> no move history in state</label>
+      <label><input id="lookahead" type="checkbox"> lookahead: each move lists the sticker count it leads to</label>
     </div>
     <div class="row" style="margin-top:10px">
       <button class="go" id="run">Run</button>
@@ -109,19 +112,17 @@ const NORMALS = [[0,1,0],[0,-1,0],[1,0,0],[-1,0,0],[0,0,1],[0,0,-1]];
 const FACE    = ['U','D','R','L','F','B'];          // face whose outward normal is NORMALS[i]
 const LETTER  = ['W','Y','R','O','G','B'];          // home colour of that face
 const HEX     = { W:'#f4f4f0', Y:'#ffd500', R:'#d9262c', O:'#ff7a1a', G:'#16a85a', B:'#1f5fd6' };
-const FACE_NAME = { U:'Up', D:'Down', R:'Right', L:'Left', F:'Front', B:'Back' };
 const AXIS = { U:[1,1], D:[1,-1], R:[0,1], L:[0,-1], F:[2,1], B:[2,-1] };
 
-let cubies, history;
+let cubies, history, prefix, runId;   // cube = solved + prefix (scrambles) + history
 function resetCube() {
+  prefix = []; runId = null;
   cubies = [];
   for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++)
     if (x || y || z) cubies.push({ p:[x,y,z], home:[x,y,z], m:ID });
   history = [];
 }
 
-const validMove = s => /^[UDLRFB]['2]?$/.test(s);
-const inverse = s => s[1] === '2' ? s : s[1] === "'" ? s[0] : s[0] + "'";
 function parseMove(s) {
   const [axis, layer] = AXIS[s[0]];
   const q = s[1] === "'" ? -1 : s[1] === '2' ? 2 : 1;
@@ -254,57 +255,29 @@ $('scramble').onclick = () => {
     if (!seq.length || seq[seq.length - 1][0] !== mv[0]) seq.push(mv);
   }
   seq.forEach(mv => turn(mv, 70, false));
-  chain = chain.then(() => { history = []; updateHud(); log('scramble: ' + seq.join(' ')); });
+  chain = chain.then(() => { prefix.push(...history, ...seq); history = []; runId = null; updateHud(); log('scramble: ' + seq.join(' ')); });
 };
 
 // ---------- Jev ----------
-function describe(mv) {
-  const how = mv[1] === "'" ? '90° counter-clockwise' : mv[1] === '2' ? '180°' : '90° clockwise';
-  return `Turn the ${FACE_NAME[mv[0]]} face ${how} (seen from outside that face)`;
-}
-function stateText(g) {
-  const rows = FACE.map(f => `${f} (${FACE_NAME[f]}, centre ${g[f][1][1]}): ${g[f].map(r => r.join('')).join(' / ')}`);
-  return [
-    "3x3 Rubik's cube. Colours: W white, Y yellow, R red, O orange, G green, B blue.",
-    'Each face is 3 rows, top to bottom, read from outside the cube (U with Back at the top, D with Front at the top, side faces with U at the top).',
-    ...rows,
-    `Stickers matching their face centre: ${matched(g)}/54`,
-    `Moves made so far (${history.length}): ${history.join(' ') || 'none'}`,
-    history.length ? `Previous move: ${history[history.length - 1]} (undone by ${inverse(history[history.length - 1])})` : '',
-  ].filter(Boolean).join('\n');
-}
-
+// The server owns the prompt: it rebuilds the cube from prefix + history, asks Jev,
+// appends the step to runs/<run>.jsonl and returns the record.
 async function decide() {
-  const g = facelets();
-  let options = [...new Set($('moves').value.trim().split(/[\s,]+/).filter(Boolean))];
-  const bad = options.filter(m => !validMove(m));
-  if (bad.length) throw new Error('unknown moves: ' + bad.join(' '));
-  const last = history[history.length - 1];
-  if ($('noUndo').checked && last && options.length > 1) options = options.filter(m => m !== inverse(last));
-  if (!options.length) throw new Error('no moves offered');
-
-  const body = { model: 'jev-latest', state: stateText(g), questions: { next_move: {
-    type: 'choice', instructions: $('instr').value, criteria: Object.fromEntries(options.map(m => [m, describe(m)])) } } };
-  const t0 = performance.now();
-  const res = await fetch('/api/decide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  const ms = performance.now() - t0, text = await res.text();
+  runId ??= 'web-' + new Date().toISOString().replace(/\D/g, '').slice(0, 14);
+  const body = { run: runId, scramble: prefix, history, options: $('moves').value.trim().split(/[\s,]+/).filter(Boolean),
+    instructions: $('instr').value, sample: $('sample').checked, no_undo: $('noUndo').checked,
+    shuffle: $('shuffle').checked, hide_history: $('hideHistory').checked, lookahead: $('lookahead').checked };
+  const res = await fetch('/api/step', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const text = await res.text();
   $('raw').textContent = JSON.stringify(body, null, 2) + '\n\n→ ' + res.status + '\n' + text;
-  if (!res.ok) throw new Error(`jev ${res.status}: ${text.slice(0, 300)}`);
-  const out = JSON.parse(text), a = out.answers.next_move;
-  stats.calls++; stats.ms += ms; stats.tokens += out.usage?.input_tokens || 0;
+  if (!res.ok) throw new Error(`step ${res.status}: ${text.slice(0, 300)}`);
+  const r = JSON.parse(text);
+  stats.calls++; stats.ms += r.ms; stats.tokens += r.input_tokens;
 
-  let move = a.choice;
-  if ($('sample').checked) {
-    let r = Math.random() * options.reduce((s, m) => s + (a.probabilities[m] || 0), 0);
-    for (const m of options) { r -= a.probabilities[m] || 0; if (r <= 0) { move = m; break; } }
-  }
-  if (!options.includes(move)) throw new Error('jev chose a move that was not offered: ' + move);
-
-  const top = Object.entries(a.probabilities).sort((x, y) => y[1] - x[1]).slice(0, 6);
+  const top = Object.entries(r.probabilities).sort((x, y) => y[1] - x[1]).slice(0, 6);
   $('probs').innerHTML = top.map(([m, p]) =>
-    `<div class="bar"><span>${m === move ? '<b>' + m + '</b>' : m}</span><span><i style="width:${p * 100}%"></i></span><span>${(p * 100).toFixed(1)}%</span></div>`).join('')
-    + `<div style="color:var(--dim);margin-top:6px">confidence ${a.confidence.toFixed(2)} · ${Math.round(ms)} ms · ${out.model}</div>`;
-  return { move, p: a.probabilities[move], ms };
+    `<div class="bar"><span>${m === r.move ? '<b>' + m + '</b>' : m}</span><span><i style="width:${p * 100}%"></i></span><span>${(p * 100).toFixed(1)}%</span></div>`).join('')
+    + `<div style="color:var(--dim);margin-top:6px">confidence ${r.confidence.toFixed(2)} · ${r.ms} ms · ${r.model} · runs/${runId}.jsonl</div>`;
+  return { move: r.move, p: r.probabilities[r.move], ms: r.ms };
 }
 
 let running = false;
