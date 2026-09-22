@@ -155,7 +155,7 @@ func runCmd() *cobra.Command {
 					fmt.Printf("solved in %d face turns\n", len(req.History))
 					break
 				}
-				if len(req.History) >= req.Limit {
+				if req.Limit > 0 && len(req.History) >= req.Limit {
 					fmt.Printf("DNF: turn limit of %d reached\n", req.Limit)
 					break
 				}
@@ -245,11 +245,11 @@ func gameQuery(game string) string {
 }
 
 // goalText states the goal of a game to its player: the sentence every prompt opens with.
-func goalText(goal string, limit int) string {
+func goalText(goal string) string {
 	if goal == goalTime {
-		return fmt.Sprintf("Goal: solve the cube as fast as possible, timed from registration to the last move. The number of face turns does not count, but the game ends unsolved at %d face turns.", limit)
+		return fmt.Sprintf("Goal: solve the cube as fast as possible, timed from registration to the last move. The number of face turns does not count; the game ends unsolved after %s.", timeLimit)
 	}
-	return fmt.Sprintf("Goal: solve the cube in as few face turns as possible; the game ends unsolved at %d face turns.", limit)
+	return fmt.Sprintf("Goal: solve the cube in as few face turns as possible; the game ends unsolved at %d face turns.", defaultLimit)
 }
 
 // playPrompt is what a registered player is told once, before the first observation.
@@ -257,30 +257,30 @@ const playPrompt = `You are playing game %[1]s as %[2]s. %[3]s
 
 Commands, the only things that touch the cube:
   jev-playground state --game %[1]s            look at the cube, free, any number of times
-  jev-playground move "<actions>" --game %[1]s   turn faces, e.g. move "R U R'" --game %[1]s; any number of actions per call, each costs one face turn
+  jev-playground move "<actions>" --game %[1]s   turn faces, e.g. move "R U R'" --game %[1]s; any number of actions per call, each is one face turn
 Actions: U D L R F B turn that face 90° clockwise as seen from outside the face, X' is counter-clockwise, X2 is 180°. There are no whole-cube rotations: centres never move.
 No scripts, loops, solvers or simulation of the cube in code: the cube is simulated only in your head. Reading the scramble, the server's API or its logs forfeits the game.
 
 `
 
 // servedCube fetches a session of a running `serve` and rebuilds its cube.
-func servedCube(addr, game string) (*Cube, []string, string, error) {
+func servedCube(addr, game string) (*Cube, event, error) {
+	var st event
 	resp, err := http.Get("http://" + addr + "/api/state" + gameQuery(game))
 	if err != nil {
-		return nil, nil, "", err
+		return nil, st, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(resp.Body)
-		return nil, nil, "", errors.New(strings.TrimSpace(string(msg)))
+		return nil, st, errors.New(strings.TrimSpace(string(msg)))
 	}
-	var st event
 	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
-		return nil, nil, "", err
+		return nil, st, err
 	}
 	cube := NewCube()
 	cube.ApplyAll(st.Scramble)
-	return cube, st.History, st.View, cube.ApplyAll(st.History)
+	return cube, st, cube.ApplyAll(st.History)
 }
 
 // playCmds are for a player other than Jev: read the served cube, think, move.
@@ -289,15 +289,19 @@ func playCmds() []*cobra.Command {
 	// observe prints the observation in the game's own mode (--view overrides it, and
 	// picks the mode on the sandbox). With image the faces go to a PNG next to the text.
 	observe := func() error {
-		cube, history, registered, err := servedCube(addr, game)
+		cube, st, err := servedCube(addr, game)
 		if err != nil {
 			return err
 		}
-		mode := cmp.Or(view, registered, obsText)
+		mode := cmp.Or(view, st.View, obsText)
 		if err := validObservation(mode); err != nil {
 			return err
 		}
-		fmt.Println(cube.StateText(history, defaultLimit, mode))
+		limit := defaultLimit
+		if !st.Deadline.IsZero() {
+			limit = 0
+		}
+		fmt.Println(cube.StateText(st.History, budget(len(st.History), limit, st.Deadline), mode))
 		if mode != obsImage {
 			return nil
 		}
@@ -337,7 +341,7 @@ func playCmds() []*cobra.Command {
 				return err
 			}
 			game = g.Session
-			fmt.Printf(playPrompt, g.Session, g.Player, goalText(g.Goal, defaultLimit))
+			fmt.Printf(playPrompt, g.Session, g.Player, goalText(g.Goal))
 			return observe()
 		},
 	}

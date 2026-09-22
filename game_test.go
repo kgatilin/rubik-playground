@@ -48,6 +48,34 @@ func TestGameLifecycleAndLeaderboard(t *testing.T) {
 	}
 }
 
+func TestTimedGameHasDeadlineNotTurnLimit(t *testing.T) {
+	t.Chdir(t.TempDir())
+	s := newSession(nil)
+	g, err := s.Play(PlayRequest{Player: "model-a", Goal: goalTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Deadline.Sub(g.Started) != timeLimit || g.turnLimit() != 0 {
+		t.Fatalf("game = %+v", g)
+	}
+	for range defaultLimit + 5 { // past the turn limit of a turns game
+		if err := s.Move([]string{"R"}, "model-a"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if s.game == nil {
+		t.Fatal("timed game closed by the turn limit")
+	}
+	s.game.Deadline = time.Now().Add(-time.Second)
+	if err := s.Move([]string{"R"}, "model-a"); err != errLimit {
+		t.Fatalf("move past the deadline: %v", err)
+	}
+	rows, err := leaderboard()
+	if err != nil || len(rows) != 1 || rows[0].DNF != 1 || rows[0].Category != "text+time" {
+		t.Fatalf("rows = %+v, %v", rows, err)
+	}
+}
+
 func TestTimedCategoryRanksByTime(t *testing.T) {
 	t.Chdir(t.TempDir())
 	base := time.Now().UTC()

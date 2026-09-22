@@ -24,8 +24,10 @@ implemented yet. Everything else matches the code.
   - `turns` (default): face turns in the half-turn metric, each of the 18 single moves
     costs 1. A bundle costs the number of single moves it expands to. Decisions and
     latency are logged as secondary numbers and do not affect the score.
-  - `time`: seconds from registration to the last move. Face turns do not count, but the
-    100-turn limit still ends the game as a DNF.
+  - `time`: seconds from registration to the last move. Face turns do not count and there
+    is no turn limit; the game is a DNF 30 minutes after registration (`timeLimit`), closed
+    by a timer even if nobody moves. The observation's last line is the time left instead
+    of the turns used.
 - The scramble is hidden from every player. A player that read the scramble, the
   server session (`/api/state` JSON, `runs/*.jsonl` of the current game) or the
   event stream has forfeited the game.

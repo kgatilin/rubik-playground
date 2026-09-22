@@ -30,19 +30,20 @@ var allMoves = strings.Fields("U U' U2 D D' D2 L L' L2 R R' R2 F F' F2 B B' B2")
 // StepRequest is one decision: the cube is NewCube + Scramble + History.
 // Both the web page and the CLI go through Decide with this.
 type StepRequest struct {
-	Player       string   `json:"player"` // "jev" (default) or "gemini:<model>[@<thinking level>]"
-	Limit        int      `json:"limit"`  // face-turn limit of the game
-	Run          string   `json:"run"`
-	Scramble     []string `json:"scramble"`
-	History      []string `json:"history"`
-	Options      []string `json:"options"`
-	Instructions string   `json:"instructions"`
-	Sample       bool     `json:"sample"`                // draw the move from the probabilities instead of taking the top one
-	NoUndo       bool     `json:"no_undo"`               // do not offer the inverse of the previous move
-	Shuffle      bool     `json:"shuffle"`               // randomise the order in which moves are listed
-	Lookahead    bool     `json:"lookahead"`             // describe each move by the sticker count it leads to
-	Observation  string   `json:"observation,omitempty"` // how the faces are shown: "text" (default), "pieces" or "image"
-	Goal         string   `json:"goal,omitempty"`        // "" fewest face turns, "time" fastest solve
+	Player       string    `json:"player"`            // "jev" (default) or "gemini:<model>[@<thinking level>]"
+	Limit        int       `json:"limit"`             // face-turn limit of the game; 0 = none (timed game)
+	Deadline     time.Time `json:"deadline,omitzero"` // timed game: when it ends unsolved
+	Run          string    `json:"run"`
+	Scramble     []string  `json:"scramble"`
+	History      []string  `json:"history"`
+	Options      []string  `json:"options"`
+	Instructions string    `json:"instructions"`
+	Sample       bool      `json:"sample"`                // draw the move from the probabilities instead of taking the top one
+	NoUndo       bool      `json:"no_undo"`               // do not offer the inverse of the previous move
+	Shuffle      bool      `json:"shuffle"`               // randomise the order in which moves are listed
+	Lookahead    bool      `json:"lookahead"`             // describe each move by the sticker count it leads to
+	Observation  string    `json:"observation,omitempty"` // how the faces are shown: "text" (default), "pieces" or "image"
+	Goal         string    `json:"goal,omitempty"`        // "" fewest face turns, "time" fastest solve
 }
 
 // StepRecord is the outcome of one decision and one line of runs/<run>.jsonl.
@@ -106,6 +107,9 @@ type Decider interface {
 	Decide(context.Context, StepRequest) (*StepRecord, error)
 }
 
+// budget is the limit line of the observation for this request.
+func (r StepRequest) budget() string { return budget(len(r.History), r.Limit, r.Deadline) }
+
 // prepareStep rebuilds the cube and the list of moves offered for this decision.
 func prepareStep(req StepRequest) (*Cube, []string, error) {
 	cube := NewCube()
@@ -167,7 +171,7 @@ func (j *Jev) Decide(ctx context.Context, req StepRequest) (*StepRecord, error) 
 		return nil, err
 	}
 	rec := &StepRecord{Time: time.Now().UTC(), Step: len(req.History) + 1, Request: req, Offered: offered,
-		State: cube.StateText(req.History, req.Limit, req.Observation), MatchedBefore: cube.Matched()}
+		State: cube.StateText(req.History, req.budget(), req.Observation), MatchedBefore: cube.Matched()}
 
 	criteria := make(orderedCriteria, len(offered))
 	for i, m := range offered {

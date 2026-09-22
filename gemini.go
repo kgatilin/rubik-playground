@@ -48,7 +48,7 @@ func newGemini(spec string) (*Gemini, error) {
 
 func (g *Gemini) config(options []string, goal string) *genai.GenerateContentConfig {
 	return &genai.GenerateContentConfig{
-		SystemInstruction: genai.NewContentFromText(fmt.Sprintf(geminiRules, goalText(goal, defaultLimit)), genai.RoleUser),
+		SystemInstruction: genai.NewContentFromText(fmt.Sprintf(geminiRules, goalText(goal)), genai.RoleUser),
 		ThinkingConfig:    &genai.ThinkingConfig{IncludeThoughts: true, ThinkingLevel: g.level},
 		ToolConfig: &genai.ToolConfig{FunctionCallingConfig: &genai.FunctionCallingConfig{
 			Mode: genai.FunctionCallingConfigModeAny}},
@@ -69,7 +69,7 @@ func (g *Gemini) Decide(ctx context.Context, req StepRequest) (*StepRecord, erro
 		return nil, err
 	}
 	rec := &StepRecord{Time: time.Now().UTC(), Step: len(req.History) + 1, Request: req, Offered: offered,
-		State: cube.StateText(req.History, req.Limit, req.Observation), MatchedBefore: cube.Matched()}
+		State: cube.StateText(req.History, req.budget(), req.Observation), MatchedBefore: cube.Matched()}
 	if req.Observation == obsImage {
 		rec.Image = cube.StateImage()
 	}

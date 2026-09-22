@@ -16,7 +16,8 @@ import (
 
 const (
 	gamesFile    = "games"
-	gameScramble = 20 // face turns of a leaderboard scramble
+	gameScramble = 20               // face turns of a leaderboard scramble
+	timeLimit    = 30 * time.Minute // a timed game ends unsolved at this age; it has no turn limit
 )
 
 // Game is one registered attempt: a player, a random scramble, and the moves
@@ -34,6 +35,7 @@ type Game struct {
 	Moves       []string  `json:"moves"`
 	Decisions   int       `json:"decisions,omitempty"` // built-in players only
 	Started     time.Time `json:"started"`
+	Deadline    time.Time `json:"deadline,omitzero"` // timed games: DNF from here on
 	Ended       time.Time `json:"ended,omitzero"`
 	Outcome     string    `json:"outcome,omitempty"` // solved | dnf | abandoned
 }
@@ -66,6 +68,43 @@ func (g *Game) category() string {
 // timed reports whether the game is ranked by time.
 func (g *Game) timed() bool { return g.Goal == goalTime }
 
+// turnLimit is the face turns a game may use: none for a timed game.
+func (g *Game) turnLimit() int {
+	if g != nil && g.timed() {
+		return 0
+	}
+	return defaultLimit
+}
+
+// deadline is when a timed game ends unsolved; zero for a turn-limited game.
+func (g *Game) deadline() time.Time {
+	if g == nil {
+		return time.Time{}
+	}
+	return g.Deadline
+}
+
+// budget is the last line of the observation: what the player has used of the
+// game's limit.
+func budget(turns, limit int, deadline time.Time) string {
+	if !deadline.IsZero() {
+		left := max(time.Until(deadline), 0).Round(time.Second)
+		return fmt.Sprintf("Time left: %s of %s; face turns do not count (%d made)", left, timeLimit, turns)
+	}
+	if limit > 0 {
+		return fmt.Sprintf("Face turns used: %d of %d", turns, limit)
+	}
+	return ""
+}
+
+// over reports whether the game's limit is reached: the turn limit, or the deadline.
+func (g *Game) over(turns int) bool {
+	if g.timed() {
+		return time.Now().After(g.Deadline)
+	}
+	return turns >= defaultLimit
+}
+
 type PlayRequest struct {
 	Player      string `json:"player"`
 	Observation string `json:"observation"`
@@ -96,6 +135,16 @@ func (s *Session) Play(in PlayRequest) (*Game, error) {
 	s.game = &Game{ID: s.run, Session: s.id, Player: in.Player, Observation: in.Observation, Goal: in.Goal,
 		Lookahead: in.Lookahead && in.Player == "jev", // only Jev is shown lookahead
 		Scramble:  slices.Clone(s.scramble), Started: time.Now().UTC()}
+	if g := s.game; g.timed() {
+		g.Deadline = g.Started.Add(timeLimit)
+		time.AfterFunc(timeLimit, func() { // the clock closes the game even if nobody moves
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if s.game == g {
+				s.closeGame("dnf")
+			}
+		})
+	}
 	s.publish(event{Type: "scramble", Moves: s.scramble})
 	s.publish(event{Type: "game", Game: s.game})
 	return s.game, nil
@@ -127,7 +176,7 @@ func (s *Session) record(m, by string, at time.Time) {
 	cube.ApplyAll(s.history)
 	if cube.Solved() {
 		s.closeGame("solved")
-	} else if len(s.history) >= defaultLimit {
+	} else if s.game.over(len(s.history)) {
 		s.closeGame("dnf")
 	}
 }

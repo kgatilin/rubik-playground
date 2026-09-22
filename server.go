@@ -46,15 +46,30 @@ type event struct {
 	Scramble []string    `json:"scramble"`
 	History  []string    `json:"history"`
 	Record   *StepRecord `json:"record,omitempty"`
-	Game     *Game       `json:"game,omitempty"` // game: opened (no outcome) or closed
-	View     string      `json:"view,omitempty"` // /api/state only: the observation mode the session's game was registered with
-	Log      []event     `json:"log,omitempty"`  // sync only: the game so far, for the page log
+	Game     *Game       `json:"game,omitempty"`    // game: opened (no outcome) or closed
+	View     string      `json:"view,omitempty"`    // /api/state only: the observation mode the session's game was registered with
+	Deadline time.Time   `json:"deadline,omitzero"` // /api/state only: when the open timed game ends
+	Log      []event     `json:"log,omitempty"`     // sync only: the game so far, for the page log
 }
 
 var (
 	errSolved = errors.New("cube is already solved")
-	errLimit  = fmt.Errorf("turn limit of %d reached", defaultLimit)
+	errLimit  = errors.New("the game's limit is reached")
 )
+
+// limitReached reports whether the session may take no more moves: the sandbox
+// and turn-limited games at defaultLimit turns, timed games past their deadline
+// (which closes the game). Callers hold s.mu.
+func (s *Session) limitReached() bool {
+	if g := s.game; g != nil && g.timed() {
+		if g.over(len(s.history)) {
+			s.closeGame("dnf")
+			return true
+		}
+		return false
+	}
+	return len(s.history) >= defaultLimit
+}
 
 // players lists what the page can pick: jev plus gemini:<model> for GEMINI_MODELS.
 func players() []string {
@@ -199,7 +214,7 @@ func (s *Session) Move(moves []string, by string) error {
 	by = cmp.Or(by, s.name, "cli")
 	at := time.Now().UTC()
 	for _, m := range moves {
-		if len(s.history) >= defaultLimit {
+		if s.limitReached() {
 			return errLimit
 		}
 		s.record(m, by, at)
@@ -240,7 +255,7 @@ func (s *Session) Step(ctx context.Context, req StepRequest) (*StepRecord, error
 		req.Player = "jev"
 	}
 	s.mu.Lock()
-	req.Run, req.Limit = s.run, defaultLimit
+	req.Run, req.Limit, req.Deadline = s.run, s.game.turnLimit(), s.game.deadline()
 	req.Scramble, req.History = slices.Clone(s.scramble), slices.Clone(s.history)
 	cube := NewCube()
 	cube.ApplyAll(s.scramble)
@@ -252,13 +267,14 @@ func (s *Session) Step(ctx context.Context, req StepRequest) (*StepRecord, error
 		req.Observation, req.Lookahead, req.Goal = g.Observation, g.Lookahead, g.Goal
 	}
 	d, err := s.decider(req.Player)
+	over := s.limitReached()
 	s.mu.Unlock()
 	switch {
 	case err != nil:
 		return nil, err
 	case cube.Solved():
 		return nil, errSolved
-	case len(req.History) >= defaultLimit:
+	case over:
 		return nil, errLimit
 	}
 
@@ -360,7 +376,7 @@ func (h *Hub) routes(mux *http.ServeMux) {
 		if s := session(w, r); s != nil {
 			s.mu.Lock()
 			defer s.mu.Unlock()
-			writeJSON(w, event{Type: "sync", Scramble: s.scramble, History: s.history, View: s.view})
+			writeJSON(w, event{Type: "sync", Scramble: s.scramble, History: s.history, View: s.view, Deadline: s.game.deadline()})
 		}
 	})
 	mux.HandleFunc("/api/players", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, players()) })

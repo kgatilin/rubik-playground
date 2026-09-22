@@ -336,7 +336,7 @@ func (c *Cube) piecesText() string {
 
 // StateText is the observation every player gets. With obsImage the face rows
 // are left out: the faces travel as StateImage next to this text.
-func (c *Cube) StateText(history []string, limit int, mode string) string {
+func (c *Cube) StateText(history []string, budget string, mode string) string {
 	var b strings.Builder
 	if mode == obsImage {
 		b.WriteString("3x3 Rubik's cube. Colours: white, yellow, red, orange, green, blue.\n")
@@ -372,8 +372,8 @@ func (c *Cube) StateText(history []string, limit int, mode string) string {
 	fmt.Fprintf(&b, "Middle layer: edges solved %d/4\n", p.MiddleEdges)
 	fmt.Fprintf(&b, "U layer (white): edges white-up %d/4, edges solved %d/4, corners in place %d/4, corners solved %d/4",
 		p.UEdgesWhiteUp, p.UEdgesSolved, p.UCornersInPlace, p.UCornersSolved)
-	if limit > 0 {
-		fmt.Fprintf(&b, "\nFace turns used: %d of %d", len(history), limit)
+	if budget != "" {
+		b.WriteString("\n" + budget)
 	}
 	if len(history) > 0 {
 		last := history[len(history)-1]
