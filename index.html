@@ -277,7 +277,7 @@ let stats = { calls: 0, ms: 0, tokens: 0 };
 function updateHud() {
   const n = matched(facelets());
   $('hud').innerHTML = `stickers on their face <b class="${n === 54 ? 'ok' : ''}">${n}/54</b>${n === 54 ? ' <span class="ok">solved</span>' : ''}`
-    + `<br>face turns <b>${history.length}</b> / 100`
+    + (deadline ? `<br>time left <b>${dur(deadline - Date.now())}</b> · face turns <b>${history.length}</b>` : `<br>face turns <b>${history.length}</b> / 100`)
     + (stats.calls ? `<br>decisions <b>${stats.calls}</b> · avg <b>${Math.round(stats.ms / stats.calls)} ms</b> · <b>${stats.tokens}</b> input tokens` : '');
 }
 
@@ -298,6 +298,9 @@ function note(html, err) {
 }
 const log = (text, err) => note(esc(text), err);
 let gameStart = null, lastAt = null;   // clock of the current game, from event times
+let deadline = null;   // ms timestamp when the shown timed game ends unsolved; null for a turn-limited game
+const setDeadline = t => { deadline = t ? Date.parse(t) : null; };
+setInterval(() => { if (deadline) updateHud(); }, 1000);
 function separator(text) {
   lastMoves = null;
   const d = document.createElement('div'); d.className = 'sep'; d.textContent = text;
@@ -366,7 +369,13 @@ const builtIn = by => /^(jev$|gemini:)/.test(by || '');
 function logEvent(e) {
   if (e.type === 'decision') decisionCard(e.record);
   else if (e.type === 'scramble') separator(`scramble · ${e.moves.length} moves`);
-  else if (e.type === 'game') { separator(e.game.outcome ? `game #${e.game.session} over · ${e.game.player} · ${e.game.outcome} · ${e.game.moves.length} face turns` : `game #${e.game.session} · ${e.game.player} · faces: ${e.game.observation}`); if (e.game.outcome) loadBoard(); }
+  else if (e.type === 'game') {
+    const g = e.game, timed = g.goal === 'time';
+    separator(g.outcome ? `game #${g.session} over · ${g.player} · ${g.outcome} · ${g.moves.length} face turns${timed ? ' · ' + dur(Date.parse(g.ended) - Date.parse(g.started)) : ''}`
+      : `game #${g.session} · ${g.player} · faces: ${g.observation}${timed ? ' · goal: fastest' : ''}`);
+    setDeadline(g.outcome ? null : g.deadline);
+    if (g.outcome) loadBoard();
+  }
   else if (e.type === 'move' && !builtIn(e.by)) logMove(e);
   if (e.type === 'scramble') gameStart = lastAt = Date.parse(e.time);
   else if (e.type === 'decision') lastAt = Date.parse(e.record.time) + e.record.ms;
@@ -396,6 +405,7 @@ function onEvent(msg) {
       history = e.history || [];
       logEl.textContent = ''; lastMoves = null; gameStart = lastAt = null; stats = { calls: 0, ms: 0, tokens: 0 }; $('runName').textContent = '';
       (e.log || []).forEach(logEvent);
+      setDeadline(e.deadline);
       updateHud();
     });
     return;
@@ -503,14 +513,16 @@ async function run(limit, game = currentGame) {
   } catch (e) { if (e.name === 'AbortError') say('stopped: the decision in progress was dropped'); else say(esc(e.message), true); }
   runs.delete(game); syncButtons(); loadGames();
 }
-const maxSteps = () => Math.max(1, Math.min(500, +$('maxSteps').value || 100));
-$('run').onclick = () => run(maxSteps());
+// A timed game is closed by the clock (the server refuses steps past the deadline), so
+// "decisions max" does not cap it.
+const maxSteps = timed => timed ? Infinity : Math.max(1, Math.min(500, +$('maxSteps').value || 100));
+$('run').onclick = () => run(maxSteps(deadline));
 $('play').onclick = async () => {
   const r = stepRequest(''), game = await post('/api/play', { player: r.player, observation: r.observation, goal: $('goal').value, lookahead: r.lookahead }).catch(e => log(e.message, true));
   if (!game) return;
   owners.set(game.session, game.player);
   watch(game.session);
-  run(maxSteps(), game.session);
+  run(maxSteps(game.goal === 'time'), game.session);
 };
 $('step').onclick = () => run(1);
 $('stop').onclick = () => { const r = runs.get(currentGame); if (r) { r.stop = true; r.abort?.abort(); } };
