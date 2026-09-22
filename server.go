@@ -100,7 +100,7 @@ func (h *Hub) Play(in PlayRequest) (*Game, error) {
 	if in.Player == "" {
 		return nil, errors.New("a game needs a player name")
 	}
-	if err := validObservation(in.Observation); err != nil {
+	if err := cmp.Or(validObservation(in.Observation), validGoal(in.Goal)); err != nil {
 		return nil, err
 	}
 	h.mu.Lock()
@@ -249,7 +249,7 @@ func (s *Session) Step(ctx context.Context, req StepRequest) (*StepRecord, error
 		s.mu.Unlock()
 		return nil, fmt.Errorf("the game in progress belongs to %s", g.Player)
 	} else if g != nil { // the game's category is fixed at registration
-		req.Observation, req.Lookahead = g.Observation, g.Lookahead
+		req.Observation, req.Lookahead, req.Goal = g.Observation, g.Lookahead, g.Goal
 	}
 	d, err := s.decider(req.Player)
 	s.mu.Unlock()

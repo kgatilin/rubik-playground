@@ -42,6 +42,7 @@ type StepRequest struct {
 	Shuffle      bool     `json:"shuffle"`               // randomise the order in which moves are listed
 	Lookahead    bool     `json:"lookahead"`             // describe each move by the sticker count it leads to
 	Observation  string   `json:"observation,omitempty"` // how the faces are shown: "text" (default), "pieces" or "image"
+	Goal         string   `json:"goal,omitempty"`        // "" fewest face turns, "time" fastest solve
 }
 
 // StepRecord is the outcome of one decision and one line of runs/<run>.jsonl.

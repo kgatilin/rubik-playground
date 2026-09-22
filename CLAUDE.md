@@ -19,9 +19,13 @@ implemented yet. Everything else matches the code.
   (`defaultLimit`); the server refuses moves past it and a decision's move list is cut
   at it. Reaching the limit unsolved is a DNF. `run --max` and the page's "decisions
   max" only cap the number of built-in decisions.
-- Score = face turns in the half-turn metric: each of the 18 single moves costs 1.
-  A bundle costs the number of single moves it expands to. Decisions and latency are
-  logged as secondary numbers and do not affect the score.
+- Score depends on the game's `goal`, fixed at registration (`play --goal`, the page's
+  goal selector, `run --game --goal`) and told to the player in the prompt:
+  - `turns` (default): face turns in the half-turn metric, each of the 18 single moves
+    costs 1. A bundle costs the number of single moves it expands to. Decisions and
+    latency are logged as secondary numbers and do not affect the score.
+  - `time`: seconds from registration to the last move. Face turns do not count, but the
+    100-turn limit still ends the game as a DNF.
 - The scramble is hidden from every player. A player that read the scramble, the
   server session (`/api/state` JSON, `runs/*.jsonl` of the current game) or the
   event stream has forfeited the game.
@@ -40,8 +44,10 @@ The leaderboard (`leaderboard` command, `/api/leaderboard`, the page panel) is c
 from that file on every read: per player and category, games, solved, DNF, abandoned, best
 and mean face turns of solved games, with the duration of the best game and the mean
 duration (registration to last move). Category is the observation mode, plus `+lookahead`
-for Jev. A built-in player's `observation` and `lookahead` are fixed at registration, and
-a step by another built-in player is refused while a game is open.
+for Jev, plus `+time` for the time goal. Rows are grouped by category; a `+time` row's best
+game is the fastest one and the row sorts by seconds, every other row's best game has the
+fewest turns. A built-in player's `observation`, `goal` and `lookahead` are fixed at
+registration, and a step by another built-in player is refused while a game is open.
 
 Not covered: the name is whatever the player declares; a forfeit (reading the scramble) is
 not detected; every move made while a game is open counts towards it, including moves from
@@ -76,7 +82,8 @@ turn accounting and the same log:
 - Allowed commands: `jev-playground play --as <name>` (register: fresh scramble, the
   result goes to the leaderboard under that name), `jev-playground state --game <n>`,
   `jev-playground move <actions> --game <n>`, with the game number `play` printed.
-  `play --view <mode>` picks the observation of the game; `state` and `move` then print
+  `play --view <mode>` picks the observation of the game and `play --goal turns|time` what
+  it is ranked by; `state` and `move` then print
   that mode by themselves (`--view` on them overrides it, and picks the mode on the sandbox).
   `jev-playground actions` **(proposed)**. Nothing else touches the cube.
 - A leaderboard attempt starts with `play` and is played in one observation mode, the one
@@ -212,10 +219,11 @@ Stated so results are read correctly; none of it is compensated unless listed.
   main surface: one card per decision (moves, sticker delta, probabilities or thought
   summary, the observation the player saw, the raw record), one line per `move` call of a
   CLI agent or click by hand (turn numbers, the moves, the pause before the call, the time
-  since the game started; events carry a server `time`, and the moves of one call share it), separators for game start and end. Above the log: the game tabs
-  (sandbox and every game session as `#n player`, polled from `/api/games`; a tab switches the event
+  since the game started; events carry a server `time`, and the moves of one call share it), separators for game start and end. Above the log: the games panel
+  (collapsed: the shown game and how many games are open; expanded: one tab per session, sandbox
+  and `#n player`, polled from `/api/games`; a tab switches the event
   stream, so the cube and the log are that game's), the player,
-  thinking level and faces (observation) selectors, Play (register a leaderboard game and
+  thinking level, faces (observation) and goal selectors, Play (register a leaderboard game and
   run), Run (keep playing the current cube), Step, Stop, and the Leaderboard panel. The
   server replays the current game's events on connect
   (`sync.log`), so the log survives a reload. `#open` in the URL expands every card.

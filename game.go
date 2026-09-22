@@ -28,6 +28,7 @@ type Game struct {
 	Session     string    `json:"session"` // short number of the game on its serve: what state and move are pointed at
 	Player      string    `json:"player"`
 	Observation string    `json:"observation"`
+	Goal        string    `json:"goal,omitempty"` // "" = fewest face turns, goalTime = fastest solve
 	Lookahead   bool      `json:"lookahead,omitempty"`
 	Scramble    []string  `json:"scramble"`
 	Moves       []string  `json:"moves"`
@@ -37,18 +38,38 @@ type Game struct {
 	Outcome     string    `json:"outcome,omitempty"` // solved | dnf | abandoned
 }
 
+// The goal of a game: what the leaderboard ranks solved games by.
+const (
+	goalTurns = "turns" // fewest face turns (default)
+	goalTime  = "time"  // shortest time from registration to the last move; face turns do not count
+)
+
+func validGoal(goal string) error {
+	if goal != "" && goal != goalTurns && goal != goalTime {
+		return fmt.Errorf("unknown goal %q: use %s or %s", goal, goalTurns, goalTime)
+	}
+	return nil
+}
+
 // category separates results that are not comparable.
 func (g *Game) category() string {
 	c := cmp.Or(g.Observation, obsText)
 	if g.Lookahead {
 		c += "+lookahead"
 	}
+	if g.Goal == goalTime {
+		c += "+time"
+	}
 	return c
 }
+
+// timed reports whether the game is ranked by time.
+func (g *Game) timed() bool { return g.Goal == goalTime }
 
 type PlayRequest struct {
 	Player      string `json:"player"`
 	Observation string `json:"observation"`
+	Goal        string `json:"goal"`
 	Lookahead   bool   `json:"lookahead"`
 }
 
@@ -60,8 +81,11 @@ func (s *Session) Play(in PlayRequest) (*Game, error) {
 	if in.Player == "" {
 		return nil, errors.New("a game needs a player name")
 	}
-	if err := validObservation(in.Observation); err != nil {
+	if err := cmp.Or(validObservation(in.Observation), validGoal(in.Goal)); err != nil {
 		return nil, err
+	}
+	if in.Goal == goalTurns {
+		in.Goal = ""
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -69,7 +93,7 @@ func (s *Session) Play(in PlayRequest) (*Game, error) {
 	s.scramble, s.history, s.run, s.gemini = nil, nil, newRunID("game"), map[string]*Gemini{}
 	s.publish(event{Type: "sync"})
 	s.scramble = randomScramble(gameScramble)
-	s.game = &Game{ID: s.run, Session: s.id, Player: in.Player, Observation: in.Observation,
+	s.game = &Game{ID: s.run, Session: s.id, Player: in.Player, Observation: in.Observation, Goal: in.Goal,
 		Lookahead: in.Lookahead && in.Player == "jev", // only Jev is shown lookahead
 		Scramble:  slices.Clone(s.scramble), Started: time.Now().UTC()}
 	s.publish(event{Type: "scramble", Moves: s.scramble})
@@ -108,21 +132,35 @@ func (s *Session) record(m, by string, at time.Time) {
 	}
 }
 
-// BoardRow is one leaderboard line: a player in one category.
+// BoardRow is one leaderboard line: a player in one category. The best game is
+// the one with the fewest face turns, or in a timed category the fastest one.
 type BoardRow struct {
 	Player    string  `json:"player"`
 	Category  string  `json:"category"`
+	Timed     bool    `json:"timed,omitempty"` // the category ranks by time
 	Attempts  int     `json:"attempts"`
 	Solved    int     `json:"solved"`
 	DNF       int     `json:"dnf"`
 	Abandoned int     `json:"abandoned"`
-	Best      int     `json:"best,omitempty"`      // fewest face turns of a solved game
+	Best      int     `json:"best,omitempty"`      // face turns of the best solved game
 	Mean      float64 `json:"mean,omitempty"`      // face turns over solved games
 	BestSecs  float64 `json:"best_secs,omitempty"` // duration of the best game, registration to last move
 	MeanSecs  float64 `json:"mean_secs,omitempty"` // duration over solved games
 }
 
-// leaderboard aggregates the games file: solvers first by best result, then by mean.
+// better reports whether a solved game of n turns in secs beats the row's best.
+func (r *BoardRow) better(n int, secs float64) bool {
+	if r.Best == 0 {
+		return true
+	}
+	if r.Timed {
+		return secs < r.BestSecs || secs == r.BestSecs && n < r.Best
+	}
+	return n < r.Best || n == r.Best && secs < r.BestSecs
+}
+
+// leaderboard aggregates the games file: solvers first, by category, then by the
+// category's best result, then by its mean.
 func leaderboard() ([]BoardRow, error) {
 	f, err := os.Open(filepath.Join(runsDir, gamesFile+".jsonl"))
 	if errors.Is(err, os.ErrNotExist) {
@@ -142,7 +180,7 @@ func leaderboard() ([]BoardRow, error) {
 		k := [2]string{g.Player, g.category()}
 		r := rows[k]
 		if r == nil {
-			r = &BoardRow{Player: k[0], Category: k[1]}
+			r = &BoardRow{Player: k[0], Category: k[1], Timed: g.timed()}
 			rows[k] = r
 		}
 		r.Attempts++
@@ -152,7 +190,7 @@ func leaderboard() ([]BoardRow, error) {
 			r.Mean = (r.Mean*float64(r.Solved) + float64(n)) / float64(r.Solved+1)
 			r.MeanSecs = (r.MeanSecs*float64(r.Solved) + secs) / float64(r.Solved+1)
 			r.Solved++
-			if r.Best == 0 || n < r.Best || n == r.Best && secs < r.BestSecs {
+			if r.better(n, secs) {
 				r.Best, r.BestSecs = n, secs
 			}
 		case "dnf":
@@ -166,8 +204,12 @@ func leaderboard() ([]BoardRow, error) {
 		out = append(out, *r)
 	}
 	slices.SortFunc(out, func(a, b BoardRow) int {
-		return cmp.Or(cmp.Compare(min(b.Solved, 1), min(a.Solved, 1)), cmp.Compare(a.Best, b.Best),
-			cmp.Compare(a.Mean, b.Mean), cmp.Compare(b.Attempts, a.Attempts), cmp.Compare(a.Player, b.Player))
+		byBest, byMean := cmp.Compare(a.Best, b.Best), cmp.Compare(a.Mean, b.Mean)
+		if a.Timed {
+			byBest, byMean = cmp.Compare(a.BestSecs, b.BestSecs), cmp.Compare(a.MeanSecs, b.MeanSecs)
+		}
+		return cmp.Or(cmp.Compare(min(b.Solved, 1), min(a.Solved, 1)), cmp.Compare(a.Category, b.Category),
+			byBest, byMean, cmp.Compare(b.Attempts, a.Attempts), cmp.Compare(a.Player, b.Player))
 	})
 	return out, sc.Err()
 }

@@ -10,7 +10,7 @@ import (
 	"google.golang.org/genai"
 )
 
-const geminiRules = `You are playing a Rubik's cube game. Goal: solve the 3x3 cube in as few face turns as possible; the game ends unsolved when the turn limit is reached.
+const geminiRules = `You are playing a Rubik's cube game. %s
 
 You act only by calling the tool move(actions). Each action is one face turn: U D L R F B turn that face 90° clockwise as seen from outside the face, X' is counter-clockwise, X2 is 180°. There are no whole-cube rotations: centres never move, U is always the white centre and F the green one. Every tool response is the new observation of the cube. You may send several actions in one call; each costs one face turn. Think about where pieces go before moving, and keep your plan in mind between calls.`
 
@@ -46,9 +46,9 @@ func newGemini(spec string) (*Gemini, error) {
 	return &Gemini{client: client, model: model, level: level}, nil
 }
 
-func (g *Gemini) config(options []string) *genai.GenerateContentConfig {
+func (g *Gemini) config(options []string, goal string) *genai.GenerateContentConfig {
 	return &genai.GenerateContentConfig{
-		SystemInstruction: genai.NewContentFromText(geminiRules, genai.RoleUser),
+		SystemInstruction: genai.NewContentFromText(fmt.Sprintf(geminiRules, goalText(goal, defaultLimit)), genai.RoleUser),
 		ThinkingConfig:    &genai.ThinkingConfig{IncludeThoughts: true, ThinkingLevel: g.level},
 		ToolConfig: &genai.ToolConfig{FunctionCallingConfig: &genai.FunctionCallingConfig{
 			Mode: genai.FunctionCallingConfigModeAny}},
@@ -98,7 +98,7 @@ func (g *Gemini) Decide(ctx context.Context, req StepRequest) (*StepRecord, erro
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	t0 := time.Now()
-	resp, err := g.client.Models.GenerateContent(ctx, g.model, g.contents, g.config(offered))
+	resp, err := g.client.Models.GenerateContent(ctx, g.model, g.contents, g.config(offered, req.Goal))
 	rec.Millis = time.Since(t0).Milliseconds()
 	if err != nil {
 		g.contents = g.contents[:len(g.contents)-1] // the decision can be retried

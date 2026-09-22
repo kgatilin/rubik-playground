@@ -179,6 +179,7 @@ func runCmd() *cobra.Command {
 	f.BoolVar(&req.Shuffle, "shuffle", false, "randomise the order of offered moves")
 	f.BoolVar(&req.Lookahead, "lookahead", true, "describe each move by the sticker count it leads to")
 	f.StringVar(&req.Observation, "observation", obsText, "how the faces are shown to the player: "+strings.Join(observations, ", ")+" (image: not for jev)")
+	f.StringVar(&req.Goal, "goal", goalTurns, "with --game: turns (fewest face turns) or time (fastest solve)")
 	return cmd
 }
 
@@ -202,7 +203,7 @@ func runOnServer(addr string, req StepRequest, scramble []string, maxMoves int, 
 	session := ""
 	call := func(path string, in, out any) error { return call(addr, path, in, out) }
 	if game {
-		in := PlayRequest{Player: req.Player, Observation: req.Observation, Lookahead: req.Lookahead}
+		in := PlayRequest{Player: req.Player, Observation: req.Observation, Goal: req.Goal, Lookahead: req.Lookahead}
 		var g Game
 		if err := call("/api/play", in, &g); err != nil {
 			return err
@@ -243,12 +244,20 @@ func gameQuery(game string) string {
 	return "?game=" + url.QueryEscape(game)
 }
 
+// goalText states the goal of a game to its player: the sentence every prompt opens with.
+func goalText(goal string, limit int) string {
+	if goal == goalTime {
+		return fmt.Sprintf("Goal: solve the cube as fast as possible, timed from registration to the last move. The number of face turns does not count, but the game ends unsolved at %d face turns.", limit)
+	}
+	return fmt.Sprintf("Goal: solve the cube in as few face turns as possible; the game ends unsolved at %d face turns.", limit)
+}
+
 // playPrompt is what a registered player is told once, before the first observation.
-const playPrompt = `You are playing game %[1]s as %[2]s. Goal: solve the cube in as few face turns as possible; the game ends unsolved at %[3]d face turns.
+const playPrompt = `You are playing game %[1]s as %[2]s. %[3]s
 
 Commands, the only things that touch the cube:
   jev-playground state --game %[1]s            look at the cube, free, any number of times
-  jev-playground move <actions> --game %[1]s   turn faces, e.g. move R U R' --game %[1]s; any number of actions per call, each costs one face turn
+  jev-playground move "<actions>" --game %[1]s   turn faces, e.g. move "R U R'" --game %[1]s; any number of actions per call, each costs one face turn
 Actions: U D L R F B turn that face 90° clockwise as seen from outside the face, X' is counter-clockwise, X2 is 180°. There are no whole-cube rotations: centres never move.
 No scripts, loops, solvers or simulation of the cube in code: the cube is simulated only in your head. Reading the scramble, the server's API or its logs forfeits the game.
 
@@ -276,7 +285,7 @@ func servedCube(addr, game string) (*Cube, []string, string, error) {
 
 // playCmds are for a player other than Jev: read the served cube, think, move.
 func playCmds() []*cobra.Command {
-	var addr, player, game, view, imagePath string
+	var addr, player, game, view, goal, imagePath string
 	// observe prints the observation in the game's own mode (--view overrides it, and
 	// picks the mode on the sandbox). With image the faces go to a PNG next to the text.
 	observe := func() error {
@@ -322,17 +331,18 @@ func playCmds() []*cobra.Command {
 		Short: "Register for a leaderboard game: fresh 20-move scramble, the result is recorded under the name",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			in := PlayRequest{Player: player, Observation: cmp.Or(view, obsText)}
+			in := PlayRequest{Player: player, Observation: cmp.Or(view, obsText), Goal: goal}
 			var g Game
 			if err := call(addr, "/api/play", in, &g); err != nil {
 				return err
 			}
 			game = g.Session
-			fmt.Printf(playPrompt, g.Session, g.Player, defaultLimit)
+			fmt.Printf(playPrompt, g.Session, g.Player, goalText(g.Goal, defaultLimit))
 			return observe()
 		},
 	}
 	play.Flags().StringVar(&player, "as", "", "model name the result is recorded under")
+	play.Flags().StringVar(&goal, "goal", goalTurns, "what the game is ranked by: turns (fewest face turns) or time (fastest solve); each is its own leaderboard category")
 	for _, c := range []*cobra.Command{state, move} {
 		c.Flags().StringVar(&game, "game", "", "game number printed by play; without it, the sandbox cube")
 	}

@@ -28,7 +28,10 @@
   label { color:var(--dim); display:flex; gap:6px; align-items:center; }
   .row { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
 
-  #games { display:flex; gap:6px; flex-wrap:wrap; padding:8px 14px; border-bottom:1px solid var(--line); }
+  #games { border-bottom:1px solid var(--line); }
+  #games > summary { padding:8px 14px; cursor:pointer; color:var(--dim); font:11.5px/1.4 var(--mono); list-style-position:inside; }
+  #games > summary #gamesNow { color:var(--fg); }
+  #games .body { display:flex; gap:6px; flex-wrap:wrap; padding:0 14px 8px; max-height:22vh; overflow:auto; }
   #games button { font:11.5px/1.4 var(--mono); padding:3px 8px; } #games button.on { border-color:var(--accent, #4ea1ff); color:#fff; }
   #games button .st { color:var(--dim); margin-left:6px; }
   #settings, #board { border-bottom:1px solid var(--line); }
@@ -83,6 +86,7 @@
     <select id="player" title="built-in player"></select>
     <select id="thinking" title="Gemini thinking level"><option value="">thinking: default</option><option>minimal</option><option>low</option><option>medium</option><option>high</option></select>
     <select id="observation" title="how the faces are shown to the player"><option value="text">faces: text</option><option value="net">faces: net</option><option value="json">faces: json</option><option value="pieces">faces: pieces</option><option value="image">faces: image</option></select>
+    <select id="goal" title="what a Play game is ranked by; each goal is its own leaderboard category"><option value="turns">goal: fewest turns</option><option value="time">goal: fastest</option></select>
     <button class="go" id="play" title="leaderboard game: fresh 20-move scramble, then run">Play</button>
     <button id="run" title="keep playing the current cube">Run</button>
     <button id="step">Step</button>
@@ -93,7 +97,10 @@
     <button id="reset">Reset</button>
   </div>
 
-  <div id="games" title="cubes on this server: the sandbox and one per registered game"></div>
+  <details id="games" title="cubes on this server: the sandbox and one per registered game">
+    <summary><span id="gamesNow"></span></summary>
+    <div class="body"></div>
+  </details>
 
   <details id="settings">
     <summary>Settings</summary>
@@ -413,11 +420,17 @@ function loadGames() {
   fetch('/api/games').then(r => r.json()).then(list => {
     if (!list.some(g => g.id === currentGame)) return watch('');
     owners = new Map(list.map(g => [g.id, g.player]));
-    $('games').innerHTML = list.map(g => `<button data-game="${esc(g.id)}" class="${g.id === currentGame ? 'on' : ''}">${g.id ? `#${esc(g.id)} ${esc(g.player)}` : 'sandbox'}`
-      + `<span class="st">${g.solved && g.turns ? 'solved · ' : g.open ? '' : g.id ? 'over · ' : ''}${g.turns} turns${runs.has(g.id) ? ' · running' : ''}</span></button>`).join('');
+    const label = g => g.id ? `#${esc(g.id)} ${esc(g.player)}` : 'sandbox';
+    const status = g => `${g.solved && g.turns ? 'solved · ' : g.open ? '' : g.id ? 'over · ' : ''}${g.turns} turns${runs.has(g.id) ? ' · running' : ''}`;
+    $('games').querySelector('.body').innerHTML = list.map(g => `<button data-game="${esc(g.id)}" class="${g.id === currentGame ? 'on' : ''}">${label(g)}<span class="st">${status(g)}</span></button>`).join('');
+    const now = list.find(g => g.id === currentGame), open = list.filter(g => g.open).length;
+    $('gamesNow').innerHTML = `${label(now)} <span class="st">${status(now)}</span>`;
+    $('gamesNow').insertAdjacentText('beforeend', ` — ${list.length - 1} games, ${open} open`);
   }).catch(() => {});
 }
 $('games').onclick = e => { const b = e.target.closest('button'); if (b && b.dataset.game !== currentGame) watch(b.dataset.game); };
+try { $('games').open = localStorage.getItem('gamesOpen') === '1'; } catch {}
+$('games').ontoggle = () => { try { localStorage.setItem('gamesOpen', $('games').open ? '1' : '0'); } catch {} };
 setInterval(loadGames, 2000);
 
 for (const f of 'UDLRFB') for (const m of ['', "'"]) {
@@ -436,8 +449,10 @@ $('scramble').onclick = () => send(api('/api/scramble'), { len: +$('scrambleN').
 const secs = t => t ? (t >= 60 ? `${Math.floor(t / 60)}m${String(Math.round(t % 60)).padStart(2, '0')}s` : `${Math.round(t)}s`) : '–';
 function loadBoard() {
   fetch('/api/leaderboard').then(r => r.json()).then(rows => {
-    $('boardRows').innerHTML = '<tr><th>player</th><th>faces</th><th>games</th><th>solved</th><th>dnf</th><th>dropped</th><th>best</th><th>time</th><th>mean</th><th>time</th></tr>'
-      + rows.map(r => `<tr><td>${esc(r.player)}</td><td>${esc(r.category)}</td><td>${r.attempts}</td><td>${r.solved}</td><td>${r.dnf}</td><td>${r.abandoned}</td><td>${r.best || '–'}</td><td>${secs(r.best_secs)}</td><td>${r.mean ? r.mean.toFixed(1) : '–'}</td><td>${secs(r.mean_secs)}</td></tr>`).join('');
+    // a timed category ranks by time, so its time columns come first
+    const cells = r => r.timed ? [secs(r.best_secs), r.best || '–', secs(r.mean_secs), r.mean ? r.mean.toFixed(1) : '–'] : [r.best || '–', secs(r.best_secs), r.mean ? r.mean.toFixed(1) : '–', secs(r.mean_secs)];
+    $('boardRows').innerHTML = '<tr><th>player</th><th>category</th><th>games</th><th>solved</th><th>dnf</th><th>dropped</th><th colspan="2">best</th><th colspan="2">mean</th></tr>'
+      + rows.map(r => `<tr><td>${esc(r.player)}</td><td>${esc(r.category)}</td><td>${r.attempts}</td><td>${r.solved}</td><td>${r.dnf}</td><td>${r.abandoned}</td>${cells(r).map(c => `<td>${c}</td>`).join('')}</tr>`).join('');
   }).catch(() => {});
 }
 loadBoard();
@@ -491,7 +506,7 @@ async function run(limit, game = currentGame) {
 const maxSteps = () => Math.max(1, Math.min(500, +$('maxSteps').value || 100));
 $('run').onclick = () => run(maxSteps());
 $('play').onclick = async () => {
-  const r = stepRequest(''), game = await post('/api/play', { player: r.player, observation: r.observation, lookahead: r.lookahead }).catch(e => log(e.message, true));
+  const r = stepRequest(''), game = await post('/api/play', { player: r.player, observation: r.observation, goal: $('goal').value, lookahead: r.lookahead }).catch(e => log(e.message, true));
   if (!game) return;
   owners.set(game.session, game.player);
   watch(game.session);

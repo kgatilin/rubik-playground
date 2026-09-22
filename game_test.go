@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strconv"
 	"testing"
+	"time"
 )
 
 func TestGameLifecycleAndLeaderboard(t *testing.T) {
@@ -44,6 +45,31 @@ func TestGameLifecycleAndLeaderboard(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0] != want {
 		t.Fatalf("leaderboard = %+v, want %+v", rows, want)
+	}
+}
+
+func TestTimedCategoryRanksByTime(t *testing.T) {
+	t.Chdir(t.TempDir())
+	base := time.Now().UTC()
+	for _, g := range []Game{
+		{Player: "slow-short", Goal: goalTime, Moves: []string{"R"}, Started: base, Ended: base.Add(30 * time.Second), Outcome: "solved"},
+		{Player: "fast-long", Goal: goalTime, Moves: []string{"R", "U", "F"}, Started: base, Ended: base.Add(10 * time.Second), Outcome: "solved"},
+		{Player: "fast-long", Goal: goalTime, Moves: []string{"R", "U"}, Started: base, Ended: base.Add(50 * time.Second), Outcome: "solved"},
+		{Player: "fast-long", Moves: []string{"R", "U"}, Started: base, Ended: base.Add(50 * time.Second), Outcome: "solved"},
+	} {
+		if err := appendJSONL(gamesFile, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := leaderboard()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 || rows[0].Category != "text" || rows[1].Category != "text+time" || rows[1].Player != "fast-long" || rows[2].Player != "slow-short" {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if r := rows[1]; !r.Timed || r.BestSecs != 10 || r.Best != 3 || r.MeanSecs != 30 {
+		t.Fatalf("timed row = %+v", r)
 	}
 }
 
