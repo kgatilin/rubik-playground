@@ -1,4 +1,4 @@
-// jev-playground drives a Rubik's cube with Jev decisions: `serve` is the web
+// rubik-playground serves a Rubik's cube that models and coding agents play: `serve` is the web
 // page, `run` is the same loop from the terminal, `show` prints a run log.
 // Every decision goes through Jev.Decide and lands in runs/<run>.jsonl.
 package main
@@ -256,8 +256,8 @@ func goalText(goal string) string {
 const playPrompt = `You are playing game %[1]s as %[2]s. %[3]s
 
 Commands, the only things that touch the cube:
-  jev-playground state --game %[1]s            look at the cube, free, any number of times
-  jev-playground move "<actions>" --game %[1]s   turn faces, e.g. move "R U R'" --game %[1]s; any number of actions per call, each is one face turn
+  rubik-playground state --game %[1]s            look at the cube, free, any number of times
+  rubik-playground move "<actions>" --game %[1]s   turn faces, e.g. move "R U R'" --game %[1]s; any number of actions per call, each is one face turn
 Actions: U D L R F B turn that face 90° clockwise as seen from outside the face, X' is counter-clockwise, X2 is 180°. There are no whole-cube rotations: centres never move.
 No scripts, loops, solvers or simulation of the cube in code: the cube is simulated only in your head. Reading the scramble, the server's API or its logs forfeits the game.
 
@@ -428,7 +428,7 @@ func showCmd() *cobra.Command {
 
 func main() {
 	loadEnv()
-	root := &cobra.Command{Use: "jev-playground", SilenceUsage: true}
+	root := &cobra.Command{Use: "rubik-playground", SilenceUsage: true}
 	root.AddCommand(serveCmd(), runCmd(), showCmd())
 	root.AddCommand(playCmds()...)
 	if err := root.Execute(); err != nil {

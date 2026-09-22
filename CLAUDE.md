@@ -1,4 +1,4 @@
-# jev-playground
+# rubik-playground
 
 `AGENTS.md` is a symlink to this file: one set of instructions for every coding agent and
 for agents that come here to play.
@@ -81,13 +81,13 @@ turn accounting and the same log:
 
 ### Rules for external (CLI) players
 
-- Allowed commands: `jev-playground play --as <name>` (register: fresh scramble, the
-  result goes to the leaderboard under that name), `jev-playground state --game <n>`,
-  `jev-playground move <actions> --game <n>`, with the game number `play` printed.
+- Allowed commands: `rubik-playground play --as <name>` (register: fresh scramble, the
+  result goes to the leaderboard under that name), `rubik-playground state --game <n>`,
+  `rubik-playground move <actions> --game <n>`, with the game number `play` printed.
   `play --view <mode>` picks the observation of the game and `play --goal turns|time` what
   it is ranked by; `state` and `move` then print
   that mode by themselves (`--view` on them overrides it, and picks the mode on the sandbox).
-  `jev-playground actions` **(proposed)**. Nothing else touches the cube.
+  `rubik-playground actions` **(proposed)**. Nothing else touches the cube.
 - A leaderboard attempt starts with `play` and is played in one observation mode, the one
   given to `play`. Calling `play` again starts another game with its own number; the first
   one stays open.
@@ -97,7 +97,7 @@ turn accounting and the same log:
 - Looking is free: `state` can be called any number of times.
 - Any number of actions per `move` call; they are applied in order and each one costs
   its face turns.
-- Quote the action list: `jev-playground move "R U R'" --game <n>`. Unquoted, the shell
+- Quote the action list: `rubik-playground move "R U R'" --game <n>`. Unquoted, the shell
   pairs the prime marks as quotes and drops them (`move R' U R'` arrives as `R U R`, three
   clockwise turns), with no error when the number of primes is even. The server cannot
   tell this from an intended `R U R`, so the turns are applied and count.
@@ -236,7 +236,7 @@ The run loop of a built-in player lives in the page, one per game, and keeps goi
 another tab is shown; closing the page stops it (`run --ui --game` in a terminal does not
 depend on the page).
 
-Build and check: `go vet ./... && go test ./... && go build -o jev-playground .`
+Build and check: `go vet ./... && go test ./... && go build -o rubik-playground .`
 After changing `index.html` or Go code, restart `serve` (the page is embedded).
 Secrets and config come from env or `.env` (gitignored, loaded by `loadEnv`):
 `JEV_API_TOKEN`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `GEMINI_MODELS`.

@@ -1,4 +1,4 @@
-module github.com/kgatilin/jev-playground
+module github.com/kgatilin/rubik-playground
 
 go 1.26.1
 

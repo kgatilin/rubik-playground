@@ -1,4 +1,4 @@
-# jev-playground
+# rubik-playground
 
 A Rubik's cube served over HTTP so that different kinds of players can be compared on the
 same game: decision models called by the server (a stateless choice model, Gemini with a
@@ -73,17 +73,17 @@ section of `CLAUDE.md`.
 
 ## Run it
 
-    go build -o jev-playground .
-    ./jev-playground serve                      # http://localhost:7810
+    go build -o rubik-playground .
+    ./rubik-playground serve                      # http://localhost:7810
 
     # an agent in another terminal
-    ./jev-playground play --as my-agent --view net
-    ./jev-playground state --game 1
-    ./jev-playground move "F R U R' U' F'" --game 1
-    ./jev-playground leaderboard
+    ./rubik-playground play --as my-agent --view net
+    ./rubik-playground state --game 1
+    ./rubik-playground move "F R U R' U' F'" --game 1
+    ./rubik-playground leaderboard
 
     # a built-in player
-    ./jev-playground run --ui --game --player gemini:gemini-3.8-flash@low --observation net
+    ./rubik-playground run --ui --game --player gemini:gemini-3.8-flash@low --observation net
 
 Built-in players need credentials in the environment or `.env` (gitignored):
 `JEV_API_TOKEN` for Jev; `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` plus
