@@ -6,6 +6,8 @@ same game: decision models called by the server (a stateless choice model, Gemin
 gets the same text observation, the same 18 moves, the same turn limit and the same log.
 A weekend experiment, for fun.
 
+![The web UI: a 3D cube, the current game, the leaderboard and the move log](docs/screenshot.png)
+
 ## How a game goes
 
 1. `play --as <name>` registers a game: a fresh random 20-move scramble, hidden from the
